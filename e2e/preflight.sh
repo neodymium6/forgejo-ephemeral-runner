@@ -5,7 +5,8 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=e2e/lib.sh
 source "${script_dir}/lib.sh"
 
-e2e_require_command kind kubectl kustomize
+e2e_require_command df kind kubectl kustomize
+e2e_assert_free_disk
 provider="$(e2e_select_provider)"
 
 printf 'E2E cluster: %s\n' "${e2e_cluster_name}"

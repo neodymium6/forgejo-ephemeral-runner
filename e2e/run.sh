@@ -99,7 +99,8 @@ if ((forgejo_port < 1024 || forgejo_port > 65535)); then
   exit 1
 fi
 
-e2e_require_command base64 curl jq kind kubectl kustomize nix
+e2e_require_command base64 curl df jq kind kubectl kustomize nix
+e2e_assert_free_disk
 provider="$(e2e_select_provider)"
 if e2e_cluster_exists "${provider}"; then
   e2e_die "dedicated E2E cluster already exists; run 'just e2e-clean' first"

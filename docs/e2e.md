@@ -22,7 +22,7 @@ credential Secret, and Forgejo registration are removed afterward.
 Use a Linux or macOS development host with a working Docker or Podman service.
 The Nix development shell supplies Kind, kubectl, curl, jq, and the remaining
 test tools. At least 4 GiB of available memory and 10 GiB of free disk space are
-recommended.
+required. The preflight check rejects hosts below the disk threshold.
 
 Check prerequisites without creating a cluster:
 

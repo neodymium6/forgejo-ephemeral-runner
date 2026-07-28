@@ -22,12 +22,35 @@ e2e_assert_safe_cluster_name "${e2e_cluster_name}"
 cat >"${test_dir}/bin/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == info ]]
+case "$*" in
+info) ;;
+"image rm --all --force") printf '%s\n' "$*" >"${E2E_PODMAN_LOG}" ;;
+*) exit 1 ;;
+esac
 EOF
+cat >"${test_dir}/bin/df" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf 'test 20000000 0 %s 0%% /\n' "${E2E_DF_AVAILABLE_KIB}"
+EOF
+chmod +x "${test_dir}/bin/df"
+
 chmod +x "${test_dir}/bin/podman"
+E2E_PODMAN_LOG="${test_dir}/podman.log"
+export E2E_PODMAN_LOG
 
 original_path="${PATH}"
 PATH="${test_dir}/bin:${PATH}"
+E2E_DF_AVAILABLE_KIB="${e2e_minimum_free_kib}"
+export E2E_DF_AVAILABLE_KIB
+e2e_assert_free_disk
+E2E_DF_AVAILABLE_KIB="$((e2e_minimum_free_kib - 1))"
+if e2e_assert_free_disk >/dev/null 2>&1; then
+  fail 'insufficient disk space was accepted'
+fi
+unset E2E_DF_AVAILABLE_KIB
+
 export PATH
 
 provider="$(e2e_select_provider)"
@@ -74,9 +97,11 @@ e2e_podman_home="${test_state_dir}/podman-home"
 e2e_podman_policy="${e2e_podman_home}/.config/containers/policy.json"
 e2e_prepare_podman_home
 [[ -f "${e2e_podman_policy}" ]] || fail 'Podman policy was not created'
+mkdir -p "${e2e_podman_home}/.local/share/containers/storage"
 e2e_delete_cluster podman "${e2e_cluster_name}"
 
 [[ ! -e "${e2e_podman_home}" ]] || fail 'Podman home was not removed'
+[[ "$(<"${E2E_PODMAN_LOG}")" == "image rm --all --force" ]] || fail 'Podman images were not removed first'
 [[ "$(<"${E2E_KIND_LOG}")" == \
   "${e2e_podman_home}||delete cluster --name ${e2e_cluster_name}" ]] ||
   fail 'unexpected Kind delete arguments or Podman policy'
