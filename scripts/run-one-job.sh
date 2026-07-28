@@ -43,6 +43,11 @@ args=(
   --handle "${handle}"
 )
 
+if [[ "${labels}" == *$'\n'* || "${labels}" == *$'\r'* ]]; then
+  echo "FORGEJO_RUNNER_LABELS must not contain newline characters" >&2
+  exit 1
+fi
+
 IFS=',' read -r -a runner_labels <<< "${labels}"
 for label in "${runner_labels[@]}"; do
   label="${label#"${label%%[![:space:]]*}"}"
@@ -50,6 +55,18 @@ for label in "${runner_labels[@]}"; do
   if [[ -z "${label}" ]]; then
     echo "FORGEJO_RUNNER_LABELS contains an empty label" >&2
     exit 1
+  fi
+  label_name="${label%%:*}"
+  label_name="${label_name#"${label_name%%[![:space:]]*}"}"
+  label_name="${label_name%"${label_name##*[![:space:]]}"}"
+  if [[ -z "${label_name}" ]]; then
+    echo "FORGEJO_RUNNER_LABELS contains an empty label name" >&2
+    exit 1
+  fi
+  if [[ "${label}" == *:* ]]; then
+    label="${label_name}:${label#*:}"
+  else
+    label="${label_name}"
   fi
   args+=(--label "${label}")
 done

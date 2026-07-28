@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -36,6 +37,33 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	}
 	if want := []string{"linux-amd64", "nix"}; !reflect.DeepEqual(cfg.RunnerLabels, want) {
 		t.Fatalf("RunnerLabels = %v, want %v", cfg.RunnerLabels, want)
+	}
+}
+
+func TestParseRunnerLabelsRejectsMalformedInput(t *testing.T) {
+	for _, value := range []string{
+		"",
+		"linux-amd64:host,,nix",
+		",linux-amd64:host",
+		"linux-amd64:host,",
+		":host",
+		"linux-amd64:host\nnix",
+		"linux-amd64:host\rnix",
+		"linux-amd64:host\x00nix",
+	} {
+		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+			if _, err := parseRunnerLabels(value); err == nil {
+				t.Fatalf("parseRunnerLabels(%q) succeeded", value)
+			}
+		})
+	}
+}
+
+func TestConfigRejectsMalformedRunnerLabels(t *testing.T) {
+	setValidConfigEnvironment(t)
+	t.Setenv("FORGEJO_RUNNER_LABELS", "linux-amd64:host,,nix")
+	if _, err := ConfigFromEnvironment(); err == nil {
+		t.Fatal("ConfigFromEnvironment() accepted an empty runner label")
 	}
 }
 

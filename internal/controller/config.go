@@ -62,7 +62,6 @@ func ConfigFromEnvironment() (Config, error) {
 		KubernetesAllowInsecureHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("KUBERNETES_INSECURE_ALLOW_HTTP")), "true"),
 		Namespace:                   strings.TrimSpace(os.Getenv("POD_NAMESPACE")),
 		RunnerName:                  strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_NAME")),
-		RunnerLabels:                splitRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS")),
 		RunnerPodName:               environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
 		ControllerIdentity:          strings.TrimSpace(os.Getenv("POD_NAME")),
 		LeaderLeaseName:             environmentOrDefault("LEADER_ELECTION_LEASE_NAME", defaultLeaderLeaseName),
@@ -74,6 +73,12 @@ func ConfigFromEnvironment() (Config, error) {
 		PollInterval:                defaultPollInterval,
 		MaxConcurrent:               defaultMaxConcurrent,
 	}
+
+	runnerLabels, err := parseRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RunnerLabels = runnerLabels
 
 	if cfg.ForgejoURL == "" {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL is required")
@@ -167,15 +172,22 @@ func ConfigFromEnvironment() (Config, error) {
 	return cfg, nil
 }
 
-func splitRunnerLabels(raw string) []string {
+func parseRunnerLabels(raw string) ([]string, error) {
+	if strings.ContainsAny(raw, "\r\n\x00") {
+		return nil, errors.New("FORGEJO_RUNNER_LABELS must not contain newline or NUL characters")
+	}
+
 	var labels []string
 	seen := make(map[string]struct{})
-	for spec := range strings.SplitSeq(raw, ",") {
+	for index, spec := range strings.Split(raw, ",") {
 		spec = strings.TrimSpace(spec)
+		if spec == "" {
+			return nil, fmt.Errorf("FORGEJO_RUNNER_LABELS entry %d is empty", index+1)
+		}
 		label, _, _ := strings.Cut(spec, ":")
 		label = strings.TrimSpace(label)
-		if label == "" || strings.ContainsAny(spec, "\r\n\x00") {
-			continue
+		if label == "" {
+			return nil, fmt.Errorf("FORGEJO_RUNNER_LABELS entry %d has an empty label name", index+1)
 		}
 		if _, duplicate := seen[label]; duplicate {
 			continue
@@ -183,7 +195,7 @@ func splitRunnerLabels(raw string) []string {
 		seen[label] = struct{}{}
 		labels = append(labels, label)
 	}
-	return labels
+	return labels, nil
 }
 
 func environmentOrDefault(name, fallback string) string {

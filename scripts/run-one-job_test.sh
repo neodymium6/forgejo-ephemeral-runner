@@ -62,3 +62,36 @@ if ! grep -Fxq -- 'job handle file is missing or empty' "${missing_handle_error}
   echo "runner returned an unexpected missing-handle error" >&2
   exit 1
 fi
+
+assert_invalid_labels() {
+  local value="$1"
+  local expected_error="$2"
+  local error_file="${test_dir}/invalid-labels-error"
+
+  if PATH="${test_dir}/bin:${PATH}" \
+    FORGEJO_RUNNER_TEST_ARGS="${test_dir}/args-invalid-labels" \
+    FORGEJO_INSTANCE_URL="https://forgejo.example.com" \
+    FORGEJO_RUNNER_LABELS="${value}" \
+    FORGEJO_RUNNER_UUID_FILE="${test_dir}/secrets/uuid" \
+    FORGEJO_RUNNER_TOKEN_FILE="${test_dir}/secrets/token" \
+    FORGEJO_JOB_HANDLE_FILE="${test_dir}/secrets/handle" \
+    bash "${project_dir}/scripts/run-one-job.sh" 2>"${error_file}"; then
+    echo "runner accepted malformed labels" >&2
+    exit 1
+  fi
+  if ! grep -Fxq -- "${expected_error}" "${error_file}"; then
+    echo "runner returned an unexpected malformed-label error" >&2
+    exit 1
+  fi
+}
+
+assert_invalid_labels \
+  "linux-amd64:host,,nix" \
+  "FORGEJO_RUNNER_LABELS contains an empty label"
+printf -v labels_with_newline '%s\n%s' 'linux-amd64:host' 'nix'
+assert_invalid_labels \
+  "${labels_with_newline}" \
+  "FORGEJO_RUNNER_LABELS must not contain newline characters"
+assert_invalid_labels \
+  ":host" \
+  "FORGEJO_RUNNER_LABELS contains an empty label name"
