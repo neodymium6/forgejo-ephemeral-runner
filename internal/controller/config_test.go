@@ -22,6 +22,7 @@ func setValidConfigEnvironment(t *testing.T) {
 func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	setValidConfigEnvironment(t)
 	t.Setenv("MAX_CONCURRENT", "3")
+	t.Setenv("KUBERNETES_INSECURE_ALLOW_HTTP", "true")
 
 	cfg, err := ConfigFromEnvironment()
 	if err != nil {
@@ -29,6 +30,9 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	}
 	if cfg.MaxConcurrent != 3 {
 		t.Fatalf("MaxConcurrent = %d, want 3", cfg.MaxConcurrent)
+	}
+	if !cfg.KubernetesAllowInsecureHTTP {
+		t.Fatal("KUBERNETES_INSECURE_ALLOW_HTTP=true was not parsed")
 	}
 	if want := []string{"linux-amd64", "nix"}; !reflect.DeepEqual(cfg.RunnerLabels, want) {
 		t.Fatalf("RunnerLabels = %v, want %v", cfg.RunnerLabels, want)

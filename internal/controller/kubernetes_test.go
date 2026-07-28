@@ -106,6 +106,17 @@ func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 	}
 }
 
+func TestKubernetesClientRejectsHTTPWithoutExplicitOptIn(t *testing.T) {
+	cfg := Config{KubernetesAPIURL: "http://kubernetes-api.example.invalid"}
+	_, err := NewKubernetesClient(cfg)
+	if err == nil {
+		t.Fatal("NewKubernetesClient() accepted HTTP without explicit opt-in")
+	}
+	if !strings.Contains(err.Error(), "KUBERNETES_INSECURE_ALLOW_HTTP=true") {
+		t.Fatalf("NewKubernetesClient() error = %q", err)
+	}
+}
+
 func TestKubernetesServiceAccountTokenReloadsForAPIAndLeaderElection(t *testing.T) {
 	tokenPath := t.TempDir() + "/token"
 	if err := os.WriteFile(tokenPath, []byte("initial-token"), 0o600); err != nil {
@@ -130,15 +141,16 @@ func TestKubernetesServiceAccountTokenReloadsForAPIAndLeaderElection(t *testing.
 	defer server.Close()
 
 	cfg := Config{
-		KubernetesAPIURL:     server.URL,
-		KubernetesTokenPath:  tokenPath,
-		PodTemplatePath:      "../../deploy/base/runner-pod.json",
-		Namespace:            "forgejo-runners",
-		RunnerPodName:        "runner-job",
-		CredentialSecretName: "runner-credential",
-		RunnerImage:          "runner:latest",
-		LeaderLeaseName:      "controller",
-		ControllerIdentity:   "controller-0",
+		KubernetesAPIURL:            server.URL,
+		KubernetesAllowInsecureHTTP: true,
+		KubernetesTokenPath:         tokenPath,
+		PodTemplatePath:             "../../deploy/base/runner-pod.json",
+		Namespace:                   "forgejo-runners",
+		RunnerPodName:               "runner-job",
+		CredentialSecretName:        "runner-credential",
+		RunnerImage:                 "runner:latest",
+		LeaderLeaseName:             "controller",
+		ControllerIdentity:          "controller-0",
 	}
 	client, err := NewKubernetesClient(cfg)
 	if err != nil {

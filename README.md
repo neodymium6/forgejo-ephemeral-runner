@@ -30,6 +30,8 @@ version are required.
 ## Security properties
 
 - The long-lived Forgejo API token is mounted only into the controller replicas.
+- The Kubernetes service account token is sent only to an HTTPS API unless an
+  operator explicitly enables the insecure HTTP test override.
 - A runner Pod receives only one ephemeral UUID and token plus its target job
   handle.
 - The runner Pod has no Kubernetes service account token.

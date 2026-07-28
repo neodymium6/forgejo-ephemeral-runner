@@ -77,8 +77,8 @@ func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Kubernetes API URL: %w", err)
 	}
-	if baseURL.Scheme != "https" && baseURL.Scheme != "http" {
-		return nil, fmt.Errorf("unsupported Kubernetes API URL scheme %q", baseURL.Scheme)
+	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && cfg.KubernetesAllowInsecureHTTP) {
+		return nil, errors.New("Kubernetes API URL must use HTTPS unless KUBERNETES_INSECURE_ALLOW_HTTP=true")
 	}
 
 	if _, err := readServiceAccountToken(cfg.KubernetesTokenPath); err != nil {

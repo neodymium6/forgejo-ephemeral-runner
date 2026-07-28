@@ -32,45 +32,47 @@ var (
 )
 
 type Config struct {
-	ForgejoURL           string
-	ForgejoScope         string
-	ForgejoAPITokenPath  string
-	AllowInsecureHTTP    bool
-	Namespace            string
-	RunnerName           string
-	RunnerLabels         []string
-	ControllerIdentity   string
-	LeaderLeaseName      string
-	RunnerPodName        string
-	RunnerImage          string
-	CredentialSecretName string
-	PodTemplatePath      string
-	KubernetesAPIURL     string
-	KubernetesTokenPath  string
-	KubernetesCAPath     string
-	PollInterval         time.Duration
-	MaxConcurrent        int
+	ForgejoURL                  string
+	ForgejoScope                string
+	ForgejoAPITokenPath         string
+	ForgejoAllowInsecureHTTP    bool
+	KubernetesAllowInsecureHTTP bool
+	Namespace                   string
+	RunnerName                  string
+	RunnerLabels                []string
+	ControllerIdentity          string
+	LeaderLeaseName             string
+	RunnerPodName               string
+	RunnerImage                 string
+	CredentialSecretName        string
+	PodTemplatePath             string
+	KubernetesAPIURL            string
+	KubernetesTokenPath         string
+	KubernetesCAPath            string
+	PollInterval                time.Duration
+	MaxConcurrent               int
 }
 
 func ConfigFromEnvironment() (Config, error) {
 	cfg := Config{
-		ForgejoURL:           strings.TrimSpace(os.Getenv("FORGEJO_INSTANCE_URL")),
-		ForgejoScope:         strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_SCOPE")),
-		ForgejoAPITokenPath:  environmentOrDefault("FORGEJO_API_TOKEN_FILE", defaultAPITokenPath),
-		AllowInsecureHTTP:    strings.EqualFold(strings.TrimSpace(os.Getenv("FORGEJO_INSECURE_ALLOW_HTTP")), "true"),
-		Namespace:            strings.TrimSpace(os.Getenv("POD_NAMESPACE")),
-		RunnerName:           strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_NAME")),
-		RunnerLabels:         splitRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS")),
-		RunnerPodName:        environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
-		ControllerIdentity:   strings.TrimSpace(os.Getenv("POD_NAME")),
-		LeaderLeaseName:      environmentOrDefault("LEADER_ELECTION_LEASE_NAME", defaultLeaderLeaseName),
-		RunnerImage:          strings.TrimSpace(os.Getenv("RUNNER_IMAGE")),
-		CredentialSecretName: environmentOrDefault("RUNNER_CREDENTIAL_SECRET_NAME", defaultCredentialName),
-		PodTemplatePath:      environmentOrDefault("RUNNER_POD_TEMPLATE_FILE", defaultPodTemplatePath),
-		KubernetesTokenPath:  environmentOrDefault("KUBERNETES_TOKEN_FILE", defaultKubernetesToken),
-		KubernetesCAPath:     environmentOrDefault("KUBERNETES_CA_FILE", defaultKubernetesCA),
-		PollInterval:         defaultPollInterval,
-		MaxConcurrent:        defaultMaxConcurrent,
+		ForgejoURL:                  strings.TrimSpace(os.Getenv("FORGEJO_INSTANCE_URL")),
+		ForgejoScope:                strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_SCOPE")),
+		ForgejoAPITokenPath:         environmentOrDefault("FORGEJO_API_TOKEN_FILE", defaultAPITokenPath),
+		ForgejoAllowInsecureHTTP:    strings.EqualFold(strings.TrimSpace(os.Getenv("FORGEJO_INSECURE_ALLOW_HTTP")), "true"),
+		KubernetesAllowInsecureHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("KUBERNETES_INSECURE_ALLOW_HTTP")), "true"),
+		Namespace:                   strings.TrimSpace(os.Getenv("POD_NAMESPACE")),
+		RunnerName:                  strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_NAME")),
+		RunnerLabels:                splitRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS")),
+		RunnerPodName:               environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
+		ControllerIdentity:          strings.TrimSpace(os.Getenv("POD_NAME")),
+		LeaderLeaseName:             environmentOrDefault("LEADER_ELECTION_LEASE_NAME", defaultLeaderLeaseName),
+		RunnerImage:                 strings.TrimSpace(os.Getenv("RUNNER_IMAGE")),
+		CredentialSecretName:        environmentOrDefault("RUNNER_CREDENTIAL_SECRET_NAME", defaultCredentialName),
+		PodTemplatePath:             environmentOrDefault("RUNNER_POD_TEMPLATE_FILE", defaultPodTemplatePath),
+		KubernetesTokenPath:         environmentOrDefault("KUBERNETES_TOKEN_FILE", defaultKubernetesToken),
+		KubernetesCAPath:            environmentOrDefault("KUBERNETES_CA_FILE", defaultKubernetesCA),
+		PollInterval:                defaultPollInterval,
+		MaxConcurrent:               defaultMaxConcurrent,
 	}
 
 	if cfg.ForgejoURL == "" {
@@ -89,7 +91,7 @@ func ConfigFromEnvironment() (Config, error) {
 	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL must not contain a query or fragment")
 	}
-	if parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && cfg.AllowInsecureHTTP) {
+	if parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && cfg.ForgejoAllowInsecureHTTP) {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL must use HTTPS unless FORGEJO_INSECURE_ALLOW_HTTP=true")
 	}
 	if _, err := scopeAPIPath(cfg.ForgejoScope); err != nil {
