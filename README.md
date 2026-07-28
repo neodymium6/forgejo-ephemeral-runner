@@ -141,5 +141,5 @@ deterministic managed identity. Unit tests cover the recovery paths, but
 failure-injection tests against a disposable Forgejo instance are still
 required before production use.
 
-A license will be selected before the first public release. Until then, no
-license is granted beyond applicable law.
+The project source is licensed under the
+[Apache License 2.0](LICENSE).
