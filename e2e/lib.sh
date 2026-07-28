@@ -211,6 +211,7 @@ e2e_delete_cluster() {
     "${e2e_provider_file}" \
     "${e2e_state_dir}/api-token" \
     "${e2e_state_dir}/controller-image" \
+    "${e2e_state_dir}/e2e-proxy-image" \
     "${e2e_state_dir}/curl.conf" \
     "${e2e_state_dir}/port-forward.log" \
     "${e2e_state_dir}/runner-image" \

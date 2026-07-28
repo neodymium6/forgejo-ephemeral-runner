@@ -9,6 +9,8 @@ forgejo_namespace="forgejo-e2e"
 runner_namespace="forgejo-ephemeral-runner"
 forgejo_port="${E2E_FORGEJO_PORT:-30080}"
 forgejo_url="http://127.0.0.1:${forgejo_port}"
+proxy_port=""
+proxy_url=""
 api_user="e2e-admin"
 repository="e2e-repository"
 port_forward_pid=""
@@ -74,6 +76,46 @@ e2e_runner_pod_count_is() {
   [[ "$(e2e_runner_pod_count)" == "${expected}" ]]
 }
 
+e2e_controller_pod_count_is() {
+  local expected="$1"
+  local actual
+  actual="$(e2e_kubectl get pods \
+    --namespace "${runner_namespace}" \
+    --selector app.kubernetes.io/component=controller \
+    --output name | wc -l | tr -d '[:space:]')"
+  [[ "${actual}" == "${expected}" ]]
+}
+
+e2e_local_runner_state_absent() {
+  [[ "$(e2e_runner_pod_count)" == 0 ]] || return
+  [[ "$(e2e_kubectl get secrets \
+    --namespace "${runner_namespace}" \
+    --selector app.kubernetes.io/managed-by=forgejo-ephemeral-runner \
+    --output name | wc -l | tr -d '[:space:]')" == 0 ]]
+}
+
+e2e_managed_runner_count_is() {
+  local expected="$1"
+  local response
+  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runners?visible=false")" ||
+    return
+  jq -e \
+    --argjson expected "${expected}" \
+    '[.[] | select(.name | startswith("e2e-ephemeral-"))] | length == $expected' \
+    <<<"${response}" >/dev/null
+}
+
+e2e_proxy_status_is() {
+  local expected="$1"
+  [[ "$(curl --fail --silent --show-error "${proxy_url}/__e2e/status")" == "${expected}" ]]
+}
+
+e2e_proxy_control() {
+  local operation="$1"
+  curl --fail --silent --show-error \
+    --request POST "${proxy_url}/__e2e/${operation}" >/dev/null
+}
+
 e2e_successful_run_count_at_least() {
   local expected="$1"
   local response
@@ -129,10 +171,12 @@ e2e_resources_cleaned() {
 case "${forgejo_port}" in
 '' | *[!0-9]*) e2e_die "E2E_FORGEJO_PORT must be an integer"; exit 1 ;;
 esac
-if ((forgejo_port < 1024 || forgejo_port > 65535)); then
-  e2e_die "E2E_FORGEJO_PORT must be between 1024 and 65535"
+if ((forgejo_port < 1024 || forgejo_port > 65534)); then
+  e2e_die "E2E_FORGEJO_PORT must be between 1024 and 65534"
   exit 1
 fi
+proxy_port=$((forgejo_port + 1))
+proxy_url="http://127.0.0.1:${proxy_port}"
 
 e2e_require_command base64 curl df jq kind kubectl kustomize nix sha256sum skopeo tar
 e2e_assert_free_disk
@@ -159,6 +203,10 @@ e2e_kind "${provider}" create cluster \
 
 e2e_kind "${provider}" load image-archive \
   --name "${e2e_cluster_name}" "${e2e_forgejo_archive}"
+printf '%s\n' 'Building and loading the registration-gate image.'
+nix build .#e2e-proxy-image --out-link "${e2e_state_dir}/e2e-proxy-image"
+e2e_kind "${provider}" load image-archive \
+  --name "${e2e_cluster_name}" "${e2e_state_dir}/e2e-proxy-image"
 e2e_kubectl apply --kustomize "${script_dir}/manifests/forgejo"
 e2e_kubectl rollout status \
   --namespace "${forgejo_namespace}" \
@@ -166,10 +214,12 @@ e2e_kubectl rollout status \
   --timeout 900s
 
 e2e_kubectl --namespace "${forgejo_namespace}" port-forward \
-  service/forgejo "${forgejo_port}:3000" \
+  service/forgejo \
+  "${forgejo_port}:3000" "${proxy_port}:3001" \
   >"${e2e_state_dir}/port-forward.log" 2>&1 &
 port_forward_pid=$!
 e2e_wait_for 'Forgejo health endpoint' 60 e2e_forgejo_ready
+e2e_wait_for 'registration gate health endpoint' 60 e2e_proxy_status_is idle
 
 admin_password="$(head -c 24 /dev/urandom | base64 | tr -d '\n')"
 e2e_kubectl exec \
@@ -268,6 +318,37 @@ e2e_wait_for 'concurrent runner cleanup' 120 e2e_resources_cleaned
 
 printf '%s\n' 'E2E concurrency lifecycle succeeded.'
 
+printf '%s\n' 'Injecting a crash at the remote-registration/local-state boundary.'
+e2e_proxy_control arm
+e2e_dispatch_workflow
+e2e_wait_for 'a committed registration with its response blocked' 120 \
+  e2e_proxy_status_is blocked
+e2e_wait_for 'one remote runner registration' 60 e2e_managed_runner_count_is 1
+if ! e2e_local_runner_state_absent; then
+  e2e_die 'controller recorded local runner state before the injected crash'
+  exit 1
+fi
+
+e2e_kubectl scale deployment \
+  --namespace "${runner_namespace}" \
+  forgejo-ephemeral-runner-controller \
+  --replicas 0
+e2e_wait_for 'all controller Pods to stop' 120 e2e_controller_pod_count_is 0
+e2e_proxy_control release
+e2e_kubectl scale deployment \
+  --namespace "${runner_namespace}" \
+  forgejo-ephemeral-runner-controller \
+  --replicas 2
+e2e_kubectl rollout status \
+  --namespace "${runner_namespace}" \
+  deployment/forgejo-ephemeral-runner-controller \
+  --timeout 120s
+e2e_wait_for 'four successful Forgejo Actions runs' 240 \
+  e2e_successful_run_count_at_least 4
+e2e_wait_for 'registration-boundary recovery cleanup' 120 e2e_resources_cleaned
+
+printf '%s\n' 'E2E registration-boundary recovery succeeded.'
+
 printf '%s\n' 'Deleting the active controller to exercise leader failover.'
 previous_leader="$(e2e_lease_holder)"
 if [[ -z "${previous_leader}" ]]; then
@@ -281,7 +362,7 @@ e2e_kubectl delete pod \
 e2e_dispatch_workflow
 e2e_wait_for 'a different leader Lease holder' 60 e2e_lease_holder_changed "${previous_leader}"
 e2e_wait_for 'one runner Pod after leader failover' 120 e2e_runner_pod_present
-e2e_wait_for 'four successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 4
+e2e_wait_for 'five successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 5
 e2e_wait_for 'post-failover runner cleanup' 120 e2e_resources_cleaned
 e2e_kubectl rollout status \
   --namespace "${runner_namespace}" \

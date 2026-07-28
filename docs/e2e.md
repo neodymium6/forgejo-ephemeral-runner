@@ -9,6 +9,7 @@ The cluster contains:
 
 - Forgejo 15.0.5 with an ephemeral SQLite database;
 - an ephemeral administrator, API token, private repository, and workflow;
+- an E2E-only proxy that can pause a committed runner-registration response;
 - the locally built controller and runner images;
 - the environment-neutral deployment base with an E2E-only overlay.
 
@@ -18,10 +19,15 @@ succeeds without a Kubernetes service account token, and the runner Pod,
 credential Secret, and Forgejo registration are removed afterward. A second
 scenario dispatches two workflows, verifies that two isolated runner Pods exist
 at the same time under `MAX_CONCURRENT=2`, and verifies complete cleanup after
-both workflows succeed. A final scenario deletes the active controller Pod,
+both workflows succeed. A failure-injection scenario lets Forgejo commit a
+runner registration while withholding the response, verifies that Kubernetes
+has no corresponding Secret or Pod, stops both controller replicas, and then
+verifies that restarted controllers remove the orphaned registration and run
+the still-queued workflow. A final scenario deletes the active controller Pod,
 waits for a different replica to acquire the Lease, and verifies that a queued
 workflow still runs and cleans up while the Deployment returns to two ready
-replicas.
+replicas. The proxy control endpoint is reachable only inside the disposable
+Kind environment and through the harness's localhost port forward.
 
 ## Requirements
 
@@ -66,7 +72,8 @@ just e2e-cache-clean
 Set `E2E_KEEP_CLUSTER=true` to retain a successful cluster. Set
 `E2E_CONTAINER_PROVIDER` to `docker` or `podman` to override automatic provider
 selection. `E2E_FORGEJO_PORT` may select a different unprivileged localhost
-port when the default `30080` is occupied.
+port when the default `30080` is occupied; the next consecutive port is reserved
+for the E2E-only registration proxy.
 
 For Podman, the harness gives Kind subprocesses an isolated home directory at
 `.e2e/podman-home/`. Podman reads its generated signature policy from the

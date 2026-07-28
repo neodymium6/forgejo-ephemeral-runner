@@ -110,7 +110,8 @@ the previous configuration.
 Polling adds up to one reconciliation interval before a job is observed. A job
 can also be canceled or claimed between listing and runner startup. These races
 should fail closed or be recovered by normal cleanup, but end-to-end failure
-injection against a disposable Forgejo instance is still required.
+injection also verifies recovery from a crash after Forgejo commits a runner
+registration and before Kubernetes records it.
 
 ## Lifecycle and stale cleanup
 
@@ -169,5 +170,3 @@ and explicit trust policy instead of a writable shared `/nix` volume.
   requests, limits, quotas, and monitoring remain required.
 - The remote-registration/local-state transaction boundary is mitigated by
   deterministic recovery rather than eliminated.
-- Failure injection at the remote-registration/local-state transaction boundary
-  is not yet included.

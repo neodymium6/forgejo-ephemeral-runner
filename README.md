@@ -152,9 +152,9 @@ and does not call the deprecated `forgejo-runner register` command or create a
 Creating a Forgejo runner and recording its ID in Kubernetes cannot be one
 atomic transaction. On restart, the active controller lists runners at its
 exact scope and safely removes only ephemeral registrations bearing its
-deterministic managed identity. Unit tests cover the recovery paths, but
-failure-injection tests against a disposable Forgejo instance are still
-required before production use.
+deterministic managed identity. Unit tests and the disposable Forgejo E2E suite
+cover a controller crash after Forgejo commits the registration but before
+Kubernetes records its ID.
 
 The project source is licensed under the
 [Apache License 2.0](LICENSE).
