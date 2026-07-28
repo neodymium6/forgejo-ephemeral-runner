@@ -2,25 +2,44 @@
 set -euo pipefail
 
 config_file="${FORGEJO_RUNNER_CONFIG:-/etc/forgejo-runner/config.yaml}"
-state_dir="${FORGEJO_RUNNER_STATE_DIR:-/var/lib/forgejo-runner}"
-completion_file="${COMPLETION_FILE:-/var/run/forgejo-ephemeral-runner/completed}"
-runner_file="${state_dir}/.runner"
+uuid_file="${FORGEJO_RUNNER_UUID_FILE:-/run/secrets/forgejo-runner/uuid}"
+token_file="${FORGEJO_RUNNER_TOKEN_FILE:-/run/secrets/forgejo-runner/token}"
+instance_url="${FORGEJO_INSTANCE_URL:?FORGEJO_INSTANCE_URL is required}"
+labels="${FORGEJO_RUNNER_LABELS:?FORGEJO_RUNNER_LABELS is required}"
 
-if [[ ! -s "${runner_file}" ]]; then
-  echo "runner registration file is missing or empty" >&2
+if [[ ! -s "${uuid_file}" ]]; then
+  echo "runner UUID file is missing or empty" >&2
+  exit 1
+fi
+if [[ ! -s "${token_file}" ]]; then
+  echo "runner token file is missing or empty" >&2
   exit 1
 fi
 
-install -d -m 0755 "$(dirname "${completion_file}")"
-rm -f "${completion_file}"
+uuid="$(tr -d '\r\n' < "${uuid_file}")"
+if [[ -z "${uuid}" ]]; then
+  echo "runner UUID is empty after trimming line endings" >&2
+  exit 1
+fi
 
-mark_complete() {
-  status=$?
-  trap - EXIT
-  printf '%s\n' "${status}" > "${completion_file}"
-  exit "${status}"
-}
-trap mark_complete EXIT
+args=(
+  --config "${config_file}"
+  one-job
+  --url "${instance_url}"
+  --uuid "${uuid}"
+  --token-url "file://${token_file}"
+  --wait
+)
 
-cd "${state_dir}" || exit 1
-forgejo-runner --config "${config_file}" one-job --wait
+IFS=',' read -r -a runner_labels <<< "${labels}"
+for label in "${runner_labels[@]}"; do
+  label="${label#"${label%%[![:space:]]*}"}"
+  label="${label%"${label##*[![:space:]]}"}"
+  if [[ -z "${label}" ]]; then
+    echo "FORGEJO_RUNNER_LABELS contains an empty label" >&2
+    exit 1
+  fi
+  args+=(--label "${label}")
+done
+
+exec forgejo-runner "${args[@]}"

@@ -26,4 +26,4 @@ check: fmt-check unit audit manifests-check
     nix flake check
 
 images:
-    nix build .#runner-image .#reaper-image
+    nix build .#runner-image .#controller-image

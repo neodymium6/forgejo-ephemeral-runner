@@ -18,25 +18,17 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = "0.1.0-dev";
-          reaper = pkgs.buildGoModule {
-            pname = "forgejo-ephemeral-runner-reaper";
+          version = "0.2.0-dev";
+          controller = pkgs.buildGoModule {
+            pname = "forgejo-ephemeral-runner-controller";
             inherit version;
             src = pkgs.lib.cleanSource ./.;
             vendorHash = null;
-            subPackages = [ "cmd/reaper" ];
+            subPackages = [ "cmd/controller" ];
             ldflags = [
               "-s"
               "-w"
             ];
-          };
-          registerScript = pkgs.writeShellApplication {
-            name = "forgejo-ephemeral-register";
-            runtimeInputs = [
-              pkgs.coreutils
-              pkgs.forgejo-runner
-            ];
-            text = builtins.readFile ./scripts/register.sh;
           };
           runOneJobScript = pkgs.writeShellApplication {
             name = "forgejo-ephemeral-one-job";
@@ -60,7 +52,6 @@
             pkgs.nix
             pkgs.nodejs_24
             pkgs.openssh
-            registerScript
             runOneJobScript
           ];
           linuxImages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
@@ -78,20 +69,24 @@
                 ];
               };
             };
-            reaper-image = pkgs.dockerTools.buildLayeredImage {
-              name = "forgejo-ephemeral-runner-reaper";
+            controller-image = pkgs.dockerTools.buildLayeredImage {
+              name = "forgejo-ephemeral-runner-controller";
               tag = version;
-              contents = [ reaper ];
+              contents = [
+                controller
+                pkgs.cacert
+              ];
               config = {
                 User = "65532:65532";
-                Entrypoint = [ "${reaper}/bin/reaper" ];
+                Entrypoint = [ "${controller}/bin/controller" ];
+                Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
               };
             };
           };
         in
         {
-          default = reaper;
-          inherit reaper;
+          default = controller;
+          inherit controller;
         }
         // linuxImages
       );

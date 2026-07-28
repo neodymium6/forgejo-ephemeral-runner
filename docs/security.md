@@ -7,15 +7,26 @@ container and the network reachable from that Pod. The design protects the
 Kubernetes node and control plane by withholding privileged mode, host mounts,
 container-runtime sockets, and Kubernetes credentials from the runner.
 
-The reaper is a separate container. Kubernetes does not share its projected
-service account token with the runner container.
+The controller is a separate Pod with a separate service account. A standard
+Kubernetes NetworkPolicy denies ingress to both controller and runner Pods.
 
 ## Credentials
 
-The long-lived Forgejo registration token is available only to the init
-container. Registration writes a runner-specific credential to an `emptyDir`.
-The runner container can read that credential because Forgejo Runner requires
-it, but the Forgejo server marks it ephemeral and assigns it at most one job.
+The long-lived Forgejo API token is available only to the controller. It is
+used to list, create, and delete runners at one configured Forgejo scope. The
+controller creates a short-lived Kubernetes Secret containing the resulting
+ephemeral runner UUID and token.
+
+Only the short-lived Secret is mounted into the runner Pod. A workflow can read
+that credential because Forgejo Runner requires it, but Forgejo marks the
+runner ephemeral and assigns it at most one job. The controller deletes the
+Secret after the Pod disappears. Forgejo invalidates the runner credential
+after its job completes or times out.
+
+The API token remains a high-value credential. Use a dedicated Forgejo account,
+select the narrowest runner scope, and grant the narrowest token permissions
+that Forgejo supports. Compromise of the controller can exercise all runner
+management privileges available to that account and token.
 
 Repository and organization Actions secrets are outside this project's control.
 Forgejo sends them to eligible workflows. Operators should register runners at
@@ -23,24 +34,44 @@ the narrowest practical scope and protect branches that can modify workflows.
 
 ## Kubernetes permissions
 
-The reaper service account can get and delete Pods in its own namespace. The
-runner cannot use that service account. A compromised reaper could disrupt
-other runner Pods in the same namespace, so the namespace should contain no
-unrelated workloads.
+The controller service account can create Pods and Secrets in its own
+namespace. `get` and `delete` are additionally restricted with `resourceNames`
+to the one deterministic runner Pod and credential Secret. It cannot read other
+Secret data through the Kubernetes API, list objects, watch objects, update
+objects, or access another namespace.
 
-Kubernetes RBAC cannot restrict a Role to a dynamically named current Pod. The
-separate token mount is therefore an essential control, not an optimization.
+The namespace must contain no unrelated workloads or Secrets. Kubernetes RBAC
+cannot restrict `create` to one exact object name, so a compromised controller
+can create additional Pods or Secrets inside its namespace even though its
+normal code uses deterministic names. A dedicated namespace keeps that residual
+capability away from unrelated credentials and workloads.
 
-## Pod replacement
+The runner service account has no RBAC binding, and its token is not
+automounted. The runner Pod receives no projected Kubernetes token.
 
-The runner writes a completion marker only after `forgejo-runner one-job`
-returns. The reaper also replaces a Pod if Kubernetes reports that the runner
-container restarted or terminated. Writing the marker early only terminates the
-current job's Pod and does not grant access to another job.
+## Lifecycle and stale cleanup
 
-A Deployment update or node disruption can interrupt an active job. Apply
-changes while the runner is idle, and rely on Forgejo's job timeout and retry
-controls for recovery.
+The controller maintains one deterministic runner slot. A terminal runner Pod
+is deleted first. On the next reconciliation, the controller deletes the
+Forgejo registration recorded on the short-lived Secret, then deletes the
+Secret and creates a fresh registration.
+
+A controller crash can happen after Forgejo creates a runner but before
+Kubernetes records its ID. Before creating a new registration, the controller
+therefore lists runners directly owned by its configured scope. It deletes a
+stale runner only when all of the following match:
+
+- the deterministic runner name;
+- the controller's fixed project description;
+- Forgejo's ephemeral flag.
+
+Any name collision that does not meet all three conditions stops reconciliation
+instead of deleting the existing runner. Only one controller instance may own
+a given scope and runner name.
+
+A runner Pod deletion or node disruption can interrupt an active job. The
+controller cleans up the old registration and creates a clean Pod after it
+returns. Forgejo job timeout and retry controls remain part of recovery.
 
 ## Nix execution
 
@@ -56,13 +87,17 @@ and explicit trust policy instead of a writable shared `/nix` volume.
 ## Known limitations
 
 - The project is not an official Forgejo component.
-- Dynamic registration currently relies on Forgejo Runner's deprecated `register`
-  command and must track upstream replacement APIs.
+- The controller is single-replica and has no leader election.
 - There is always one waiting Pod; scale-to-zero requires a queue-aware
   controller.
-- Unassigned runners that lose their Pod may leave stale offline entries.
+- A single runner slot provides concurrency one, not high availability.
+- Forgejo 15 token scopes may not isolate runner administration from other
+  administrative operations as narrowly as desired.
 - Generic NetworkPolicy cannot express Forgejo and binary-cache FQDN allowlists
   with the standard Kubernetes API.
-- A single replica provides concurrency one, not high availability.
+- The base does not restrict egress, so workflows can reach whatever cluster
+  routing and external network policy allow.
 - Resource exhaustion inside a job can pressure the selected Kubernetes node;
   requests, limits, quotas, and monitoring remain required.
+- A crash in the small interval between remote registration and local state
+  persistence relies on deterministic stale discovery during restart.

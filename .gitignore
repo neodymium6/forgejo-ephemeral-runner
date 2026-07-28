@@ -10,3 +10,5 @@ result-*
 *.key
 *.token
 .runner
+*.orig
+*.rej

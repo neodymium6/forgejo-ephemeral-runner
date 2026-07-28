@@ -6,9 +6,14 @@ resources:
   - service-account.yaml
   - rbac.yaml
   - configmaps.yaml
-  - deployment.yaml
+  - controller-deployment.yaml
   - network-policy.yaml
 configMapGenerator:
   - name: forgejo-runner-config
     files:
       - config.yaml=runner-config.yaml
+  - name: forgejo-runner-pod-template
+    files:
+      - runner-pod.json=runner-pod.json
+generatorOptions:
+  disableNameSuffixHash: true

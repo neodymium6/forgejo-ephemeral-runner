@@ -19,7 +19,7 @@ examples, tests, and documentation environment-neutral.
 - Preserve the one-job, one-Pod security boundary.
 - Do not mount host paths, container runtime sockets, or service account tokens
   into the workflow container.
-- Keep the Forgejo registration token exclusive to the registration init
-  container.
+- Keep the long-lived Forgejo API credential exclusive to the controller.
+- Pass only a server-enforced one-job UUID and token to each runner Pod.
 - Run `just check` before committing.
 - Write code, comments, commits, and documentation in English.

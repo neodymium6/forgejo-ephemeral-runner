@@ -3,7 +3,6 @@ log:
   job_level: info
 
 runner:
-  file: /var/lib/forgejo-runner/.runner
   capacity: 1
   timeout: 2h
   shutdown_timeout: 5m

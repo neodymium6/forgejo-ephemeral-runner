@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo-ephemeral-runner-controller
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-ephemeral-runner
+      app.kubernetes.io/component: controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-ephemeral-runner
+        app.kubernetes.io/component: controller
+    spec:
+      automountServiceAccountToken: false
+      serviceAccountName: forgejo-runner-controller
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: forgejo-ephemeral-runner-controller:0.2.0-dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: forgejo-runner-settings
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsGroup: 65532
+            runAsNonRoot: true
+            runAsUser: 65532
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: forgejo-api-token
+              mountPath: /run/secrets/forgejo-api
+              readOnly: true
+            - name: controller-token
+              mountPath: /var/run/secrets/forgejo-controller
+              readOnly: true
+            - name: runner-pod-template
+              mountPath: /etc/forgejo-controller
+              readOnly: true
+      volumes:
+        - name: forgejo-api-token
+          secret:
+            secretName: forgejo-runner-controller
+            defaultMode: 0400
+            items:
+              - key: api-token
+                path: api-token
+        - name: controller-token
+          projected:
+            defaultMode: 0400
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        - name: runner-pod-template
+          configMap:
+            name: forgejo-runner-pod-template
+            items:
+              - key: runner-pod.json
+                path: runner-pod.json
