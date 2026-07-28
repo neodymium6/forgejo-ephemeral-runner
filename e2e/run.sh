@@ -125,7 +125,7 @@ e2e_kubectl apply --kustomize "${script_dir}/manifests/forgejo"
 e2e_kubectl rollout status \
   --namespace "${forgejo_namespace}" \
   deployment/forgejo \
-  --timeout 600s
+  --timeout 900s
 
 e2e_kubectl --namespace "${forgejo_namespace}" port-forward \
   service/forgejo "${forgejo_port}:3000" \
@@ -150,7 +150,7 @@ api_token="$(e2e_kubectl exec \
   -- su-exec git forgejo admin user generate-access-token \
   --username "${api_user}" \
   --token-name ephemeral-runner-e2e \
-  --scopes write:repository \
+  --scopes write:repository,write:user \
   --raw | tail -n 1)"
 if [[ ! "${api_token}" =~ ^[A-Za-z0-9_-]+$ ]]; then
   e2e_die 'Forgejo returned an unexpected API token format'

@@ -23,7 +23,8 @@ Use a Linux or macOS development host with a working Docker or Podman service.
 The Nix development shell supplies Kind, kubectl, curl, jq, and the remaining
 test tools. Approximately 4 GiB of memory is recommended. At least 10 GiB of free disk
 space is required, and the preflight check rejects hosts below that threshold.
-The first Forgejo image pull may take several minutes on a slow connection.
+The first Forgejo image pull may take several minutes on a slow connection;
+the harness allows up to 15 minutes for the initial rollout.
 
 Check prerequisites without creating a cluster:
 
