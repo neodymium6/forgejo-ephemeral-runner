@@ -128,11 +128,13 @@
               [
                 curl
                 forgejo-runner
+                git
                 kind
                 go_1_26
                 golangci-lint
                 gopls
                 gotools
+                jq
                 just
                 kubeconform
                 kubectl

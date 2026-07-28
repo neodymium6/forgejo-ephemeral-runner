@@ -9,7 +9,7 @@ fmt:
 
 fmt-check:
     test -z "$(gofmt -l cmd internal)"
-    nixfmt --check flake.nix
+    nix fmt -- --ci flake.nix
 
 unit:
     go test -race ./...
