@@ -5,6 +5,8 @@ e2e_cluster_name="forgejo-ephemeral-runner-e2e"
 e2e_state_dir="${e2e_repository_root}/.e2e"
 e2e_kubeconfig="${e2e_state_dir}/kubeconfig"
 e2e_provider_file="${e2e_state_dir}/provider"
+e2e_containers_config_dir="${e2e_state_dir}/containers-config"
+e2e_podman_policy="${e2e_containers_config_dir}/containers/policy.json"
 
 e2e_die() {
   printf 'error: %s\n' "$*" >&2
@@ -58,7 +60,12 @@ e2e_select_provider() {
 e2e_kind() {
   local provider="$1"
   shift
-  KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
+  if [[ "${provider}" == podman ]]; then
+    XDG_CONFIG_HOME="${e2e_containers_config_dir}" \
+      KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
+  else
+    KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
+  fi
 }
 
 e2e_kubectl() {
@@ -88,5 +95,8 @@ e2e_delete_cluster() {
     "${e2e_state_dir}/port-forward.log" \
     "${e2e_state_dir}/runner-image" \
     "${e2e_state_dir}/workflow-request.json"
+  rm -f -- "${e2e_podman_policy}"
+  rmdir -- "${e2e_containers_config_dir}/containers" 2>/dev/null || true
+  rmdir -- "${e2e_containers_config_dir}" 2>/dev/null || true
   rmdir -- "${e2e_state_dir}" 2>/dev/null || true
 }
