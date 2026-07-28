@@ -24,6 +24,8 @@ two-replica controller Deployment
 ```
 
 `MAX_CONCURRENT` defaults to `1` and accepts values from `1` through `10`.
+Stalled `Pending` and `Unknown` Pods are recovered after configurable, positive
+timeouts; the base defaults to 30 minutes and 5 minutes respectively.
 Forgejo 15 or newer and the pinned Forgejo Runner 12.13.1 or a compatible newer
 version are required.
 
@@ -92,8 +94,9 @@ overlay must:
 3. select a runner scope;
 4. set a deterministic runner name and required runner labels;
 5. set `MAX_CONCURRENT` from `1` through `10`;
-6. provide a Secret named `forgejo-runner-controller` with an `api-token` key;
-7. review resource limits and network access for the target cluster.
+6. review `RUNNER_STARTUP_TIMEOUT` and `RUNNER_UNKNOWN_TIMEOUT`;
+7. provide a Secret named `forgejo-runner-controller` with an `api-token` key;
+8. review resource limits and network access for the target cluster.
 
 Supported scope values are:
 

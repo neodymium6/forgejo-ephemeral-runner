@@ -69,6 +69,39 @@ func TestBaseRunnerPodTemplate(t *testing.T) {
 	}
 }
 
+func TestKubernetesGetPodReturnsCreationTimestamp(t *testing.T) {
+	createdAt := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/pods/runner-job-2" {
+			http.NotFound(w, r)
+			return
+		}
+		pod := kubernetesPod{}
+		pod.Metadata.Name = "runner-job-2"
+		pod.Metadata.Namespace = "forgejo-runners"
+		pod.Metadata.UID = "pod-uid"
+		pod.Metadata.CreationTimestamp = createdAt
+		pod.Metadata.Labels = map[string]string{managedByLabel: managedByValue, slotLabel: "2"}
+		pod.Status.Phase = "Pending"
+		if err := json.NewEncoder(w).Encode(pod); err != nil {
+			t.Errorf("encode Pod: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := &KubernetesClient{
+		httpClient: server.Client(), podsURL: server.URL + "/pods",
+		namespace: "forgejo-runners", runnerPodName: "runner-job", credentialName: "runner-credential",
+	}
+	pod, err := client.GetPod(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("GetPod() error = %v", err)
+	}
+	if !pod.Exists || pod.UID != "pod-uid" || pod.Phase != "Pending" || !pod.CreatedAt.Equal(createdAt) {
+		t.Fatalf("GetPod() = %+v", pod)
+	}
+}
+
 func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 	var received kubernetesSecret
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -126,8 +126,12 @@ Only one controller Deployment and identity set may own a given scope and
 runner-name prefix.
 
 A Pod deletion or node disruption can interrupt an active job. The controller
-cleans up its old registration after Kubernetes returns. Forgejo job timeout
-and retry controls remain part of recovery.
+cleans up its old registration after Kubernetes returns. A Pod that remains
+`Pending` for `RUNNER_STARTUP_TIMEOUT` (30 minutes by default), or whose phase
+is `Unknown` after `RUNNER_UNKNOWN_TIMEOUT` (5 minutes by default), is deleted
+with a UID precondition so the fixed slot can recover. Both ages are measured
+from the Pod creation timestamp. Forgejo job timeout and retry controls remain
+part of recovery.
 
 ## Nix execution
 

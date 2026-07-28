@@ -50,6 +50,7 @@ type kubernetesObjectMeta struct {
 	UID               string            `json:"uid,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
 	Annotations       map[string]string `json:"annotations,omitempty"`
+	CreationTimestamp time.Time         `json:"creationTimestamp,omitempty"`
 	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
 }
 
@@ -218,11 +219,15 @@ func (c *KubernetesClient) GetPod(ctx context.Context, slot int) (PodState, erro
 	if err := validateManagedMetadata("runner Pod", pod.Metadata, templateData.PodName, templateData.Namespace, slot); err != nil {
 		return PodState{}, err
 	}
+	if pod.Metadata.CreationTimestamp.IsZero() {
+		return PodState{}, fmt.Errorf("managed runner Pod in slot %d has no creation timestamp", slot)
+	}
 	return PodState{
-		Exists:   true,
-		UID:      pod.Metadata.UID,
-		Deleting: pod.Metadata.DeletionTimestamp != nil,
-		Phase:    pod.Status.Phase,
+		Exists:    true,
+		UID:       pod.Metadata.UID,
+		CreatedAt: pod.Metadata.CreationTimestamp,
+		Deleting:  pod.Metadata.DeletionTimestamp != nil,
+		Phase:     pod.Status.Phase,
 	}, nil
 }
 

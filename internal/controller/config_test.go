@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func setValidConfigEnvironment(t *testing.T) {
@@ -24,6 +25,8 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	setValidConfigEnvironment(t)
 	t.Setenv("MAX_CONCURRENT", "3")
 	t.Setenv("KUBERNETES_INSECURE_ALLOW_HTTP", "true")
+	t.Setenv("RUNNER_STARTUP_TIMEOUT", "45m")
+	t.Setenv("RUNNER_UNKNOWN_TIMEOUT", "7m")
 
 	cfg, err := ConfigFromEnvironment()
 	if err != nil {
@@ -34,6 +37,9 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	}
 	if !cfg.KubernetesAllowInsecureHTTP {
 		t.Fatal("KUBERNETES_INSECURE_ALLOW_HTTP=true was not parsed")
+	}
+	if cfg.RunnerStartupTimeout != 45*time.Minute || cfg.RunnerUnknownTimeout != 7*time.Minute {
+		t.Fatalf("runner timeouts = %s and %s", cfg.RunnerStartupTimeout, cfg.RunnerUnknownTimeout)
 	}
 	if want := []string{"linux-amd64", "nix"}; !reflect.DeepEqual(cfg.RunnerLabels, want) {
 		t.Fatalf("RunnerLabels = %v, want %v", cfg.RunnerLabels, want)
@@ -64,6 +70,27 @@ func TestConfigRejectsMalformedRunnerLabels(t *testing.T) {
 	t.Setenv("FORGEJO_RUNNER_LABELS", "linux-amd64:host,,nix")
 	if _, err := ConfigFromEnvironment(); err == nil {
 		t.Fatal("ConfigFromEnvironment() accepted an empty runner label")
+	}
+}
+
+func TestConfigRejectsInvalidRunnerTimeouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{name: "RUNNER_STARTUP_TIMEOUT", value: "0s"},
+		{name: "RUNNER_STARTUP_TIMEOUT", value: "invalid"},
+		{name: "RUNNER_UNKNOWN_TIMEOUT", value: "-1s"},
+		{name: "RUNNER_UNKNOWN_TIMEOUT", value: "invalid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name+"="+test.value, func(t *testing.T) {
+			setValidConfigEnvironment(t)
+			t.Setenv(test.name, test.value)
+			if _, err := ConfigFromEnvironment(); err == nil {
+				t.Fatalf("%s=%q succeeded", test.name, test.value)
+			}
+		})
 	}
 }
 

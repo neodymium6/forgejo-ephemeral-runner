@@ -37,10 +37,11 @@ type RemoteJob struct {
 }
 
 type PodState struct {
-	Exists   bool
-	UID      string
-	Deleting bool
-	Phase    string
+	Exists    bool
+	UID       string
+	CreatedAt time.Time
+	Deleting  bool
+	Phase     string
 }
 
 type CredentialState struct {
@@ -105,6 +106,10 @@ func Reconcile(
 	if cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > maxSupportedConcurrent {
 		return fmt.Errorf("MaxConcurrent must be between 1 and %d", maxSupportedConcurrent)
 	}
+	if cfg.RunnerStartupTimeout <= 0 || cfg.RunnerUnknownTimeout <= 0 {
+		return errors.New("runner recovery timeouts must be positive")
+	}
+	now := time.Now()
 
 	type localSlot struct {
 		pod        PodState
@@ -136,6 +141,10 @@ func Reconcile(
 				activeHandles[credential.JobHandle] = struct{}{}
 				referencedRunners[credential.RunnerID] = struct{}{}
 				continue
+			}
+			if timeout, expired := stalledPodTimeout(pod, cfg, now); expired {
+				logger.Printf("deleting %s runner pod in slot %d after %s", pod.Phase, slot, timeout)
+				return kubernetes.DeletePod(ctx, slot, pod.UID)
 			}
 			switch pod.Phase {
 			case "Succeeded", "Failed":
@@ -261,6 +270,22 @@ func Reconcile(
 		activeCount++
 	}
 	return nil
+}
+
+func stalledPodTimeout(pod PodState, cfg Config, now time.Time) (time.Duration, bool) {
+	var timeout time.Duration
+	switch pod.Phase {
+	case "Pending":
+		timeout = cfg.RunnerStartupTimeout
+	case "Unknown":
+		timeout = cfg.RunnerUnknownTimeout
+	default:
+		return 0, false
+	}
+	if pod.CreatedAt.IsZero() || now.Before(pod.CreatedAt) {
+		return timeout, false
+	}
+	return timeout, now.Sub(pod.CreatedAt) >= timeout
 }
 
 func validateManagedRunnerByID(runners []RemoteRunner, id int64, expectedName string) (bool, error) {

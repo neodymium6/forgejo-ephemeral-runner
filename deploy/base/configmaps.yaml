@@ -10,3 +10,5 @@ data:
   RUNNER_IMAGE: forgejo-ephemeral-runner:0.2.0-dev
   LEADER_ELECTION_LEASE_NAME: forgejo-ephemeral-runner-controller
   MAX_CONCURRENT: "1"
+  RUNNER_STARTUP_TIMEOUT: 30m
+  RUNNER_UNKNOWN_TIMEOUT: 5m

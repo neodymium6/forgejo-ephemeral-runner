@@ -13,17 +13,19 @@ import (
 )
 
 const (
-	defaultAPITokenPath        = "/run/secrets/forgejo-api/api-token"
-	defaultKubernetesToken     = "/var/run/secrets/forgejo-controller/token"
-	defaultKubernetesCA        = "/var/run/secrets/forgejo-controller/ca.crt"
-	defaultPodTemplatePath     = "/etc/forgejo-controller/runner-pod.json"
-	defaultRunnerPodName       = "forgejo-ephemeral-runner-job"
-	defaultCredentialName      = "forgejo-ephemeral-runner-credential"
-	defaultPollInterval        = 2 * time.Second
-	defaultControllerUserAgent = "forgejo-ephemeral-runner-controller"
-	defaultMaxConcurrent       = 1
-	defaultLeaderLeaseName     = "forgejo-ephemeral-runner-controller"
-	maxSupportedConcurrent     = 10
+	defaultAPITokenPath         = "/run/secrets/forgejo-api/api-token"
+	defaultKubernetesToken      = "/var/run/secrets/forgejo-controller/token"
+	defaultKubernetesCA         = "/var/run/secrets/forgejo-controller/ca.crt"
+	defaultPodTemplatePath      = "/etc/forgejo-controller/runner-pod.json"
+	defaultRunnerPodName        = "forgejo-ephemeral-runner-job"
+	defaultCredentialName       = "forgejo-ephemeral-runner-credential"
+	defaultPollInterval         = 2 * time.Second
+	defaultRunnerStartupTimeout = 30 * time.Minute
+	defaultRunnerUnknownTimeout = 5 * time.Minute
+	defaultControllerUserAgent  = "forgejo-ephemeral-runner-controller"
+	defaultMaxConcurrent        = 1
+	defaultLeaderLeaseName      = "forgejo-ephemeral-runner-controller"
+	maxSupportedConcurrent      = 10
 )
 
 var (
@@ -50,6 +52,8 @@ type Config struct {
 	KubernetesTokenPath         string
 	KubernetesCAPath            string
 	PollInterval                time.Duration
+	RunnerStartupTimeout        time.Duration
+	RunnerUnknownTimeout        time.Duration
 	MaxConcurrent               int
 }
 
@@ -71,6 +75,8 @@ func ConfigFromEnvironment() (Config, error) {
 		KubernetesTokenPath:         environmentOrDefault("KUBERNETES_TOKEN_FILE", defaultKubernetesToken),
 		KubernetesCAPath:            environmentOrDefault("KUBERNETES_CA_FILE", defaultKubernetesCA),
 		PollInterval:                defaultPollInterval,
+		RunnerStartupTimeout:        defaultRunnerStartupTimeout,
+		RunnerUnknownTimeout:        defaultRunnerUnknownTimeout,
 		MaxConcurrent:               defaultMaxConcurrent,
 	}
 
@@ -159,6 +165,22 @@ func ConfigFromEnvironment() (Config, error) {
 		}
 		cfg.PollInterval = parsed
 	}
+	for name, target := range map[string]*time.Duration{
+		"RUNNER_STARTUP_TIMEOUT": &cfg.RunnerStartupTimeout,
+		"RUNNER_UNKNOWN_TIMEOUT": &cfg.RunnerUnknownTimeout,
+	} {
+		if raw := strings.TrimSpace(os.Getenv(name)); raw != "" {
+			parsed, err := time.ParseDuration(raw)
+			if err != nil {
+				return Config{}, fmt.Errorf("parse %s: %w", name, err)
+			}
+			if parsed <= 0 {
+				return Config{}, fmt.Errorf("%s must be positive", name)
+			}
+			*target = parsed
+		}
+	}
+
 	if raw := strings.TrimSpace(os.Getenv("MAX_CONCURRENT")); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil {

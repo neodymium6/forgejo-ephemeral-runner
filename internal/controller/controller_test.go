@@ -7,6 +7,7 @@ import (
 	"log"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type fakeForgejo struct {
@@ -96,6 +97,8 @@ func testConfig() Config {
 		RunnerLabels:         []string{"linux-amd64"},
 		RunnerPodName:        "runner-job",
 		CredentialSecretName: "runner-credential",
+		RunnerStartupTimeout: 30 * time.Minute,
+		RunnerUnknownTimeout: 5 * time.Minute,
 		MaxConcurrent:        1,
 	}
 }
@@ -141,6 +144,42 @@ func TestReconcileDeletesTerminalPod(t *testing.T) {
 	}
 	if len(forgejo.deleted) != 0 {
 		t.Fatalf("Forgejo runner deleted before Pod disappeared: %v", forgejo.deleted)
+	}
+}
+
+func TestReconcileRecoversStalledPods(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name       string
+		phase      string
+		createdAt  time.Time
+		wantDelete bool
+	}{
+		{name: "expired Pending", phase: "Pending", createdAt: now.Add(-31 * time.Minute), wantDelete: true},
+		{name: "recent Pending", phase: "Pending", createdAt: now.Add(-29 * time.Minute)},
+		{name: "expired Unknown", phase: "Unknown", createdAt: now.Add(-6 * time.Minute), wantDelete: true},
+		{name: "recent Unknown", phase: "Unknown", createdAt: now.Add(-4 * time.Minute)},
+		{name: "old Running", phase: "Running", createdAt: now.Add(-24 * time.Hour)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			forgejo := &fakeForgejo{}
+			kubernetes := &fakeKubernetes{
+				pod:        PodState{Exists: true, UID: "pod-uid", Phase: test.phase, CreatedAt: test.createdAt},
+				credential: CredentialState{Exists: true, UID: "credential-uid", RunnerID: 42, JobHandle: "job-handle"},
+			}
+
+			if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			wantCalls := 0
+			if test.wantDelete {
+				wantCalls = 1
+			}
+			if kubernetes.deletePodCalls != wantCalls {
+				t.Fatalf("DeletePod calls = %d, want %d", kubernetes.deletePodCalls, wantCalls)
+			}
+		})
 	}
 }
 
