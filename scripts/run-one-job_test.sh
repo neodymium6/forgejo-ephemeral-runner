@@ -45,17 +45,20 @@ if [[ "${args[*]}" != "${expected[*]}" ]]; then
   exit 1
 fi
 
-args_without_handle_file="${test_dir}/args-without-handle"
-PATH="${test_dir}/bin:${PATH}" \
-  FORGEJO_RUNNER_TEST_ARGS="${args_without_handle_file}" \
+missing_handle_error="${test_dir}/missing-handle-error"
+if PATH="${test_dir}/bin:${PATH}" \
+  FORGEJO_RUNNER_TEST_ARGS="${test_dir}/args-without-handle" \
   FORGEJO_INSTANCE_URL="https://forgejo.example.com" \
   FORGEJO_RUNNER_LABELS="linux-amd64:host" \
   FORGEJO_RUNNER_UUID_FILE="${test_dir}/secrets/uuid" \
   FORGEJO_RUNNER_TOKEN_FILE="${test_dir}/secrets/token" \
   FORGEJO_JOB_HANDLE_FILE="${test_dir}/secrets/missing" \
-  bash "${project_dir}/scripts/run-one-job.sh"
+  bash "${project_dir}/scripts/run-one-job.sh" 2>"${missing_handle_error}"; then
+  echo "runner accepted a missing job handle file" >&2
+  exit 1
+fi
 
-if grep -Fxq -- '--handle' "${args_without_handle_file}"; then
-  echo "--handle was passed without a job handle file" >&2
+if ! grep -Fxq -- 'job handle file is missing or empty' "${missing_handle_error}"; then
+  echo "runner returned an unexpected missing-handle error" >&2
   exit 1
 fi

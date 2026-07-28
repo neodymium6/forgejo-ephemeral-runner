@@ -23,6 +23,16 @@ if [[ -z "${uuid}" ]]; then
   exit 1
 fi
 
+if [[ ! -s "${handle_file}" ]]; then
+  echo "job handle file is missing or empty" >&2
+  exit 1
+fi
+handle="$(tr -d '\r\n' < "${handle_file}")"
+if [[ -z "${handle}" ]]; then
+  echo "job handle is empty after trimming line endings" >&2
+  exit 1
+fi
+
 args=(
   --config "${config_file}"
   one-job
@@ -30,20 +40,8 @@ args=(
   --uuid "${uuid}"
   --token-url "file://${token_file}"
   --wait
+  --handle "${handle}"
 )
-
-if [[ -e "${handle_file}" ]]; then
-  if [[ ! -s "${handle_file}" ]]; then
-    echo "job handle file is empty" >&2
-    exit 1
-  fi
-  handle="$(tr -d '\r\n' < "${handle_file}")"
-  if [[ -z "${handle}" ]]; then
-    echo "job handle is empty after trimming line endings" >&2
-    exit 1
-  fi
-  args+=(--handle "${handle}")
-fi
 
 IFS=',' read -r -a runner_labels <<< "${labels}"
 for label in "${runner_labels[@]}"; do
