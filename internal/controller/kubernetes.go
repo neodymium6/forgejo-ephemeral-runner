@@ -24,12 +24,16 @@ type KubernetesClient struct {
 	httpClient     *http.Client
 	podsURL        string
 	secretsURL     string
-	token          string
 	podTemplate    *template.Template
 	namespace      string
 	runnerPodName  string
 	credentialName string
 	runnerImage    string
+}
+
+type fileTokenRoundTripper struct {
+	base      http.RoundTripper
+	tokenPath string
 }
 
 type runnerPodTemplateData struct {
@@ -77,13 +81,8 @@ func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
 		return nil, fmt.Errorf("unsupported Kubernetes API URL scheme %q", baseURL.Scheme)
 	}
 
-	tokenBytes, err := os.ReadFile(cfg.KubernetesTokenPath)
-	if err != nil {
-		return nil, fmt.Errorf("read Kubernetes service account token: %w", err)
-	}
-	token := strings.TrimSpace(string(tokenBytes))
-	if token == "" {
-		return nil, errors.New("Kubernetes service account token is empty")
+	if _, err := readServiceAccountToken(cfg.KubernetesTokenPath); err != nil {
+		return nil, err
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -117,19 +116,44 @@ func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
 
 	return &KubernetesClient{
 		httpClient: &http.Client{
-			Transport:     transport,
+			Transport: &fileTokenRoundTripper{
+				base:      transport,
+				tokenPath: cfg.KubernetesTokenPath,
+			},
 			Timeout:       15 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
 		podsURL:        podsURL,
 		secretsURL:     secretsURL,
-		token:          token,
 		podTemplate:    podTemplate,
 		namespace:      cfg.Namespace,
 		runnerPodName:  cfg.RunnerPodName,
 		credentialName: cfg.CredentialSecretName,
 		runnerImage:    cfg.RunnerImage,
 	}, nil
+}
+
+func (t *fileTokenRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	token, err := readServiceAccountToken(t.tokenPath)
+	if err != nil {
+		return nil, err
+	}
+	cloned := req.Clone(req.Context())
+	cloned.Header = req.Header.Clone()
+	cloned.Header.Set("Authorization", "Bearer "+token)
+	return t.base.RoundTrip(cloned)
+}
+
+func readServiceAccountToken(path string) (string, error) {
+	tokenBytes, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Kubernetes service account token: %w", err)
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+	if token == "" {
+		return "", errors.New("Kubernetes service account token is empty")
+	}
+	return token, nil
 }
 
 func (c *KubernetesClient) slotResources(slot int) (runnerPodTemplateData, string, string, error) {
@@ -343,7 +367,6 @@ func (c *KubernetesClient) delete(ctx context.Context, target, operation string)
 }
 
 func (c *KubernetesClient) authorize(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", defaultControllerUserAgent)
 }

@@ -16,7 +16,6 @@ func testLeaderElector(server *httptest.Server, now time.Time) *LeaderElector {
 		httpClient:    server.Client(),
 		leasesURL:     server.URL + "/leases",
 		leaseURL:      server.URL + "/leases/controller",
-		token:         "service-account-token",
 		identity:      "controller-0",
 		namespace:     "forgejo-runners",
 		leaseName:     "controller",
@@ -41,10 +40,6 @@ func TestLeaderElectorCreatesMissingLease(t *testing.T) {
 	now := time.Date(2026, time.July, 28, 12, 0, 0, 835038584, time.UTC)
 	var created kubernetesLease
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer service-account-token" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/leases/controller":
 			http.NotFound(w, r)

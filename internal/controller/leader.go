@@ -25,7 +25,6 @@ type LeaderElector struct {
 	httpClient      *http.Client
 	leasesURL       string
 	leaseURL        string
-	token           string
 	identity        string
 	namespace       string
 	leaseName       string
@@ -80,7 +79,6 @@ func NewLeaderElector(cfg Config, kubernetes *KubernetesClient, logger *log.Logg
 		httpClient:    kubernetes.httpClient,
 		leasesURL:     leasesURL,
 		leaseURL:      leasesURL + "/" + url.PathEscape(cfg.LeaderLeaseName),
-		token:         kubernetes.token,
 		identity:      cfg.ControllerIdentity,
 		namespace:     cfg.Namespace,
 		leaseName:     cfg.LeaderLeaseName,
@@ -326,7 +324,6 @@ func (e *LeaderElector) observeLease(lease kubernetesLease, now time.Time) {
 }
 
 func (e *LeaderElector) authorize(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+e.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", defaultControllerUserAgent)
 }
