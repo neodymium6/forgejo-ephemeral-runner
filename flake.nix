@@ -1,0 +1,155 @@
+{
+  description = "One-job Forgejo runners recycled as Kubernetes Pods";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs =
+    { nixpkgs, ... }:
+    let
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+      forAllSystems = nixpkgs.lib.genAttrs systems;
+    in
+    {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          version = "0.1.0-dev";
+          reaper = pkgs.buildGoModule {
+            pname = "forgejo-ephemeral-runner-reaper";
+            inherit version;
+            src = pkgs.lib.cleanSource ./.;
+            vendorHash = null;
+            subPackages = [ "cmd/reaper" ];
+            ldflags = [
+              "-s"
+              "-w"
+            ];
+          };
+          registerScript = pkgs.writeShellApplication {
+            name = "forgejo-ephemeral-register";
+            runtimeInputs = [
+              pkgs.coreutils
+              pkgs.forgejo-runner
+            ];
+            text = builtins.readFile ./scripts/register.sh;
+          };
+          runOneJobScript = pkgs.writeShellApplication {
+            name = "forgejo-ephemeral-one-job";
+            runtimeInputs = [
+              pkgs.coreutils
+              pkgs.forgejo-runner
+            ];
+            text = builtins.readFile ./scripts/run-one-job.sh;
+          };
+          runnerContents = [
+            pkgs.bash
+            pkgs.dockerTools.fakeNss
+            pkgs.cacert
+            pkgs.coreutils
+            pkgs.findutils
+            pkgs.forgejo-runner
+            pkgs.git
+            pkgs.gnugrep
+            pkgs.gnused
+            pkgs.jq
+            pkgs.nix
+            pkgs.nodejs_24
+            pkgs.openssh
+            registerScript
+            runOneJobScript
+          ];
+          linuxImages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            runner-image = pkgs.dockerTools.buildLayeredImageWithNixDb {
+              name = "forgejo-ephemeral-runner";
+              tag = version;
+              contents = runnerContents;
+              config = {
+                User = "0:0";
+                WorkingDir = "/workspace";
+                Env = [
+                  "PATH=${pkgs.lib.makeBinPath runnerContents}"
+                  "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                  "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                ];
+              };
+            };
+            reaper-image = pkgs.dockerTools.buildLayeredImage {
+              name = "forgejo-ephemeral-runner-reaper";
+              tag = version;
+              contents = [ reaper ];
+              config = {
+                User = "65532:65532";
+                Entrypoint = [ "${reaper}/bin/reaper" ];
+              };
+            };
+          };
+        in
+        {
+          default = reaper;
+          inherit reaper;
+        }
+        // linuxImages
+      );
+
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          go-test =
+            pkgs.runCommand "forgejo-ephemeral-runner-go-test"
+              {
+                nativeBuildInputs = [ pkgs.go_1_26 ];
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                export GOCACHE="$TMPDIR/go-cache"
+                export CGO_ENABLED=0
+                mkdir -p "$HOME" "$GOCACHE"
+                cp -R ${pkgs.lib.cleanSource ./.} source
+                chmod -R u+w source
+                cd source
+                go test ./...
+                touch "$out"
+              '';
+        }
+      );
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              forgejo-runner
+              go_1_26
+              golangci-lint
+              gopls
+              gotools
+              just
+              kubeconform
+              kubectl
+              kustomize
+              nixfmt-tree
+              shellcheck
+              skopeo
+              yamllint
+            ];
+            shellHook = ''
+              export GOTOOLCHAIN=local
+            '';
+          };
+        }
+      );
+
+      formatter = forAllSystems (system: (import nixpkgs { inherit system; }).nixfmt-tree);
+    };
+}

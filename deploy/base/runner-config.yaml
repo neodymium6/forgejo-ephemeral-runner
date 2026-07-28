@@ -1,0 +1,25 @@
+log:
+  level: info
+  job_level: info
+
+runner:
+  file: /var/lib/forgejo-runner/.runner
+  capacity: 1
+  timeout: 2h
+  shutdown_timeout: 5m
+  insecure: false
+  fetch_timeout: 30s
+  fetch_interval: 2s
+  report_interval: 1s
+  labels: []
+
+cache:
+  enabled: false
+
+container:
+  privileged: false
+  valid_volumes: []
+  docker_host: "-"
+
+host:
+  workdir_parent: /workspace

@@ -1,0 +1,12 @@
+/result
+result
+result-*
+.direnv/
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.token
+.runner

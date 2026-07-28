@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-runner-settings
+data:
+  FORGEJO_INSTANCE_URL: https://forgejo.example.com
+  FORGEJO_RUNNER_LABELS: linux-amd64:host
+  FORGEJO_RUNNER_NAME_PREFIX: kubernetes-ephemeral
