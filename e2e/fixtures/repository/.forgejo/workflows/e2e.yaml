@@ -13,4 +13,5 @@ jobs:
           test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
           test "${HOME}" = /home/runner
           test "${PWD}" = /workspace/e2e-admin/e2e-repository
+          sleep 5
           printf '%s\n' 'ephemeral runner E2E succeeded'

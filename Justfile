@@ -37,5 +37,8 @@ images:
 e2e-preflight:
     bash e2e/preflight.sh
 
+e2e:
+    bash e2e/run.sh
+
 e2e-clean:
     bash e2e/cleanup.sh

@@ -71,6 +71,19 @@ e2e_delete_cluster podman "${e2e_cluster_name}"
 [[ "$(<"${E2E_KIND_LOG}")" == \
   "delete cluster --name ${e2e_cluster_name}" ]] || fail 'unexpected Kind delete arguments'
 
+cat >"${test_dir}/bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >"${E2E_KUBECTL_LOG}"
+EOF
+chmod +x "${test_dir}/bin/kubectl"
+E2E_KUBECTL_LOG="${test_dir}/kubectl.log"
+export E2E_KUBECTL_LOG
+e2e_kubeconfig="${test_dir}/dedicated-kubeconfig"
+e2e_kubectl get namespace
+[[ "$(<"${E2E_KUBECTL_LOG}")" == \
+  "--kubeconfig ${e2e_kubeconfig} get namespace" ]] || fail 'kubectl omitted E2E kubeconfig'
+
 PATH="${original_path}"
 export PATH
 printf '%s\n' 'E2E safety helper tests passed.'

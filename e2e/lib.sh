@@ -61,6 +61,10 @@ e2e_kind() {
   KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
 }
 
+e2e_kubectl() {
+  kubectl --kubeconfig "${e2e_kubeconfig}" "$@"
+}
+
 e2e_cluster_exists() {
   local provider="$1"
   e2e_kind "${provider}" get clusters 2>/dev/null |
@@ -75,6 +79,14 @@ e2e_delete_cluster() {
     e2e_kind "${provider}" delete cluster --name "${requested_name}"
   fi
 
-  rm -f -- "${e2e_kubeconfig}" "${e2e_provider_file}"
+  rm -f -- \
+    "${e2e_kubeconfig}" \
+    "${e2e_provider_file}" \
+    "${e2e_state_dir}/api-token" \
+    "${e2e_state_dir}/controller-image" \
+    "${e2e_state_dir}/curl.conf" \
+    "${e2e_state_dir}/port-forward.log" \
+    "${e2e_state_dir}/runner-image" \
+    "${e2e_state_dir}/workflow-request.json"
   rmdir -- "${e2e_state_dir}" 2>/dev/null || true
 }

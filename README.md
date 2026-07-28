@@ -62,6 +62,13 @@ nix develop
 just check
 ```
 
+The opt-in end-to-end test creates only the fixed, disposable Kind cluster
+documented in [docs/e2e.md](docs/e2e.md):
+
+```sh
+just e2e
+```
+
 Build the two OCI archives on Linux:
 
 ```sh

@@ -126,6 +126,7 @@
             packages =
               with pkgs;
               [
+                curl
                 forgejo-runner
                 kind
                 go_1_26
