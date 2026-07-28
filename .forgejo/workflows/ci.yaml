@@ -10,11 +10,23 @@ jobs:
   check:
     runs-on: linux-amd64
     timeout-minutes: 30
+    env:
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+        sandbox = false
+        build-users-group =
     steps:
       - name: Check out the repository
         uses: https://data.forgejo.org/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+
+      - name: Prepare the Nix runtime
+        run: |
+          if [[ ! -e /usr/bin/env ]]; then
+            mkdir -p /usr/bin
+            ln -s "$(command -v env)" /usr/bin/env
+          fi
 
       - name: Run project checks
         run: nix develop --command just check
