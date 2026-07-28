@@ -110,11 +110,7 @@ umask 077
 mkdir -p "${e2e_state_dir}"
 printf '%s\n' "${provider}" >"${e2e_provider_file}"
 if [[ "${provider}" == podman ]]; then
-  mkdir -p "$(dirname "${e2e_podman_policy}")"
-  printf '%s\n' \
-    '{' \
-    '  "default": [{"type": "insecureAcceptAnything"}]' \
-    '}' >"${e2e_podman_policy}"
+  e2e_prepare_podman_home
 fi
 
 printf 'Creating dedicated Kind cluster %s with %s.\n' \

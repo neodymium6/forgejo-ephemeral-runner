@@ -5,7 +5,8 @@ e2e_cluster_name="forgejo-ephemeral-runner-e2e"
 e2e_state_dir="${e2e_repository_root}/.e2e"
 e2e_kubeconfig="${e2e_state_dir}/kubeconfig"
 e2e_provider_file="${e2e_state_dir}/provider"
-e2e_podman_policy="${e2e_state_dir}/podman-policy.json"
+e2e_podman_home="${e2e_state_dir}/podman-home"
+e2e_podman_policy="${e2e_podman_home}/.config/containers/policy.json"
 
 e2e_die() {
   printf 'error: %s\n' "$*" >&2
@@ -56,11 +57,19 @@ e2e_select_provider() {
   e2e_die "neither a working Podman nor Docker installation was found"
 }
 
+e2e_prepare_podman_home() {
+  mkdir -p "$(dirname "${e2e_podman_policy}")"
+  printf '%s\n' \
+    '{' \
+    '  "default": [{"type": "insecureAcceptAnything"}]' \
+    '}' >"${e2e_podman_policy}"
+}
+
 e2e_kind() {
   local provider="$1"
   shift
   if [[ "${provider}" == podman ]]; then
-    CONTAINERS_POLICY_JSON="${e2e_podman_policy}" \
+    HOME="${e2e_podman_home}" \
       KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
   else
     KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
@@ -94,6 +103,12 @@ e2e_delete_cluster() {
     "${e2e_state_dir}/port-forward.log" \
     "${e2e_state_dir}/runner-image" \
     "${e2e_state_dir}/workflow-request.json"
-  rm -f -- "${e2e_podman_policy}"
+  if [[ "${provider}" == podman ]]; then
+    if [[ "${e2e_podman_home}" != "${e2e_state_dir}/podman-home" ]]; then
+      e2e_die "refusing to remove unexpected Podman home: ${e2e_podman_home}"
+      return 1
+    fi
+    rm -rf -- "${e2e_podman_home}"
+  fi
   rmdir -- "${e2e_state_dir}" 2>/dev/null || true
 }
