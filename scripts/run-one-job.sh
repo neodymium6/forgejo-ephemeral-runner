@@ -4,6 +4,7 @@ set -euo pipefail
 config_file="${FORGEJO_RUNNER_CONFIG:-/etc/forgejo-runner/config.yaml}"
 uuid_file="${FORGEJO_RUNNER_UUID_FILE:-/run/secrets/forgejo-runner/uuid}"
 token_file="${FORGEJO_RUNNER_TOKEN_FILE:-/run/secrets/forgejo-runner/token}"
+handle_file="${FORGEJO_JOB_HANDLE_FILE:-/run/secrets/forgejo-runner/handle}"
 instance_url="${FORGEJO_INSTANCE_URL:?FORGEJO_INSTANCE_URL is required}"
 labels="${FORGEJO_RUNNER_LABELS:?FORGEJO_RUNNER_LABELS is required}"
 
@@ -30,6 +31,19 @@ args=(
   --token-url "file://${token_file}"
   --wait
 )
+
+if [[ -e "${handle_file}" ]]; then
+  if [[ ! -s "${handle_file}" ]]; then
+    echo "job handle file is empty" >&2
+    exit 1
+  fi
+  handle="$(tr -d '\r\n' < "${handle_file}")"
+  if [[ -z "${handle}" ]]; then
+    echo "job handle is empty after trimming line endings" >&2
+    exit 1
+  fi
+  args+=(--handle "${handle}")
+fi
 
 IFS=',' read -r -a runner_labels <<< "${labels}"
 for label in "${runner_labels[@]}"; do

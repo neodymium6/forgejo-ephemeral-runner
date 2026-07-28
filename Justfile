@@ -13,6 +13,7 @@ fmt-check:
 
 unit:
     go test -race ./...
+    bash scripts/run-one-job_test.sh
 
 audit:
     go vet ./...

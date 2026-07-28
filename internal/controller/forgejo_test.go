@@ -20,6 +20,15 @@ func TestForgejoClientLifecycle(t *testing.T) {
 		}
 		methods = append(methods, r.Method)
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == apiPath+"/jobs":
+			if got := r.URL.Query().Get("labels"); got != "linux-amd64:host,nix" {
+				t.Errorf("labels query = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"id":11,"attempt":1,"handle":"waiting-handle","runs_on":["linux-amd64:host"],"status":"waiting"},
+				{"id":12,"attempt":2,"handle":"running-handle","runs_on":["nix"],"status":"running"}
+			]`))
 		case r.Method == http.MethodGet && r.URL.Path == apiPath:
 			if r.URL.Query().Get("visible") != "false" {
 				t.Errorf("visible query = %q, want false", r.URL.Query().Get("visible"))
@@ -55,6 +64,18 @@ func TestForgejoClientLifecycle(t *testing.T) {
 	}
 	client := &forgejoClient{httpClient: server.Client(), scopeURL: scopeURL, token: "api-token"}
 
+	jobs, err := client.ListJobs(context.Background(), []string{"linux-amd64:host", "nix"})
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	wantJobs := []RemoteJob{
+		{ID: 11, Attempt: 1, Handle: "waiting-handle", RunsOn: []string{"linux-amd64:host"}, Status: "waiting"},
+		{ID: 12, Attempt: 2, Handle: "running-handle", RunsOn: []string{"nix"}, Status: "running"},
+	}
+	if !reflect.DeepEqual(jobs, wantJobs) {
+		t.Fatalf("ListJobs() = %+v, want %+v", jobs, wantJobs)
+	}
+
 	runners, err := client.ListRunners(context.Background())
 	if err != nil {
 		t.Fatalf("ListRunners() error = %v", err)
@@ -73,7 +94,7 @@ func TestForgejoClientLifecycle(t *testing.T) {
 	if err := client.DeleteRunner(context.Background(), 42); err != nil {
 		t.Fatalf("DeleteRunner() error = %v", err)
 	}
-	if !reflect.DeepEqual(methods, []string{http.MethodGet, http.MethodPost, http.MethodDelete}) {
+	if !reflect.DeepEqual(methods, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodDelete}) {
 		t.Fatalf("methods = %v", methods)
 	}
 }

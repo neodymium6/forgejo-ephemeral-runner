@@ -87,6 +87,36 @@ func scopeAPIPath(scope string) (string, error) {
 	}
 }
 
+func (c *forgejoClient) ListJobs(ctx context.Context, labels []string) ([]RemoteJob, error) {
+	requestURL := *c.scopeURL
+	requestURL.Path = strings.TrimSuffix(requestURL.Path, "/") + "/jobs"
+	if len(labels) > 0 {
+		query := requestURL.Query()
+		query.Set("labels", strings.Join(labels, ","))
+		requestURL.RawQuery = query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	c.authorize(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, forgejoResponseError("list jobs", resp)
+	}
+
+	var jobs []RemoteJob
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&jobs); err != nil {
+		return nil, fmt.Errorf("decode job list: %w", err)
+	}
+	return jobs, nil
+}
+
 func (c *forgejoClient) ListRunners(ctx context.Context) ([]RemoteRunner, error) {
 	const pageSize = 50
 	var runners []RemoteRunner

@@ -19,6 +19,10 @@ type fakeForgejo struct {
 	deleteErr     error
 }
 
+func (f *fakeForgejo) ListJobs(context.Context, []string) ([]RemoteJob, error) {
+	return nil, nil
+}
+
 func (f *fakeForgejo) ListRunners(context.Context) ([]RemoteRunner, error) {
 	f.listCalls++
 	return f.runners, nil

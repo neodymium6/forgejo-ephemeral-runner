@@ -23,6 +23,14 @@ type RemoteRunner struct {
 	Ephemeral   bool   `json:"ephemeral"`
 }
 
+type RemoteJob struct {
+	ID      int64    `json:"id"`
+	Attempt int64    `json:"attempt"`
+	Handle  string   `json:"handle"`
+	RunsOn  []string `json:"runs_on"`
+	Status  string   `json:"status"`
+}
+
 type PodState struct {
 	Exists   bool
 	Deleting bool
@@ -35,6 +43,7 @@ type CredentialState struct {
 }
 
 type Forgejo interface {
+	ListJobs(context.Context, []string) ([]RemoteJob, error)
 	ListRunners(context.Context) ([]RemoteRunner, error)
 	RegisterRunner(context.Context, string, string) (Registration, error)
 	DeleteRunner(context.Context, int64) error
