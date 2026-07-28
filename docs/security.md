@@ -67,6 +67,16 @@ namespace contains that residual capability.
 The runner service account has no RBAC binding, and its token is not
 automounted. The runner Pod receives no projected Kubernetes token.
 
+Before creating a runner Pod, the controller validates the rendered template.
+It permits exactly one configured runner image invoking the one-job launcher,
+the fixed unbound service account, the reviewed security context, and the five
+reviewed ConfigMap, credential Secret, and `emptyDir` volumes and mounts. It
+rejects sidecars, init or ephemeral containers, host namespaces, host ports,
+privileged execution, added capabilities, mount propagation, host paths,
+projected tokens, persistent volumes, and CSI volumes. The base namespace also
+enforces the Kubernetes Pod Security Baseline as an admission-time backstop.
+Any future cache or volume design must update these checks explicitly.
+
 ## Leader election
 
 The base runs two controller replicas. They compete for one Kubernetes Lease;

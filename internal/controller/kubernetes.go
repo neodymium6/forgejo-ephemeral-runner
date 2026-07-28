@@ -55,12 +55,11 @@ type kubernetesObjectMeta struct {
 }
 
 type kubernetesPod struct {
-	Metadata kubernetesObjectMeta `json:"metadata"`
-	Spec     struct {
-		AutomountServiceAccountToken *bool  `json:"automountServiceAccountToken"`
-		RestartPolicy                string `json:"restartPolicy"`
-	} `json:"spec"`
-	Status struct {
+	APIVersion string               `json:"apiVersion,omitempty"`
+	Kind       string               `json:"kind,omitempty"`
+	Metadata   kubernetesObjectMeta `json:"metadata"`
+	Spec       kubernetesPodSpec    `json:"spec"`
+	Status     struct {
 		Phase string `json:"phase"`
 	} `json:"status"`
 }
@@ -244,17 +243,8 @@ func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	if err := json.Unmarshal(rendered.Bytes(), &pod); err != nil {
 		return fmt.Errorf("decode rendered runner Pod template: %w", err)
 	}
-	if pod.Metadata.Name != templateData.PodName || pod.Metadata.Namespace != templateData.Namespace {
-		return errors.New("runner Pod template metadata does not match controller configuration")
-	}
-	if pod.Metadata.Labels[managedByLabel] != managedByValue || pod.Metadata.Labels[slotLabel] != strconv.Itoa(slot) {
-		return errors.New("runner Pod template does not contain the expected ownership labels")
-	}
-	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
-		return errors.New("runner Pod template must set automountServiceAccountToken to false")
-	}
-	if pod.Spec.RestartPolicy != "Never" {
-		return errors.New("runner Pod template must set restartPolicy to Never")
+	if err := validateRunnerPodTemplate(pod, templateData); err != nil {
+		return err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.podsURL, bytes.NewReader(rendered.Bytes()))

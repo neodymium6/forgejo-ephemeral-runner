@@ -44,6 +44,9 @@ func TestBaseRunnerPodTemplate(t *testing.T) {
 	if err := json.Unmarshal(rendered.Bytes(), &pod); err != nil {
 		t.Fatalf("decode rendered Pod: %v", err)
 	}
+	if err := validateRunnerPodTemplate(pod, data); err != nil {
+		t.Fatalf("validateRunnerPodTemplate() error = %v", err)
+	}
 	if pod.Metadata.Name != data.PodName || pod.Metadata.Namespace != data.Namespace {
 		t.Fatalf("rendered metadata = %s/%s", pod.Metadata.Namespace, pod.Metadata.Name)
 	}

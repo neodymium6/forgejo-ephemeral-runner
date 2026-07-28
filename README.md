@@ -42,6 +42,9 @@ version are required.
 - Kubernetes Lease leader election permits only one active reconciler under
   normal API-server and `resourceVersion` semantics.
 - No host paths, privileged containers, or container-runtime sockets are used.
+- The controller rejects runner Pod templates that change the reviewed image,
+  launcher, service account, containers, security context, volumes, or mounts.
+- The base namespace also enforces the Kubernetes Pod Security Baseline.
 - The workflow runs as `host` from Forgejo's perspective, but that host is the
   disposable runner container, not the Kubernetes node.
 - Runner workspace, home, temporary files, Nix store changes, and writable
