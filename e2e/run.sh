@@ -125,7 +125,7 @@ e2e_kubectl apply --kustomize "${script_dir}/manifests/forgejo"
 e2e_kubectl rollout status \
   --namespace "${forgejo_namespace}" \
   deployment/forgejo \
-  --timeout 180s
+  --timeout 600s
 
 e2e_kubectl --namespace "${forgejo_namespace}" port-forward \
   service/forgejo "${forgejo_port}:3000" \
