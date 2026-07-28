@@ -49,10 +49,10 @@ Set `E2E_KEEP_CLUSTER=true` to retain a successful cluster. Set
 selection. `E2E_FORGEJO_PORT` may select a different unprivileged localhost
 port when the default `30080` is occupied.
 
-For Podman, the harness writes a containers/image signature policy under the
-ignored `.e2e/containers-config/` directory and exposes it only to Kind
-subprocesses through `XDG_CONFIG_HOME`. It does not modify the user's global
-containers configuration.
+For Podman, the harness writes a containers/image signature policy to the
+ignored `.e2e/podman-policy.json` file and exposes it only to Kind subprocesses
+through `CONTAINERS_POLICY_JSON`. It does not modify the user's global
+containers configuration. The Kind node image remains digest-pinned.
 
 The harness refuses to delete any Kind cluster whose name differs from the
 fixed E2E name. It does not connect to an existing Forgejo instance, a live

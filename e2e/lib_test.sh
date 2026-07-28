@@ -47,13 +47,17 @@ if [[ "$*" == 'get clusters' ]]; then
   printf '%s\n' forgejo-ephemeral-runner-e2e unrelated-cluster
   exit 0
 fi
-printf '%s\n' "$*" >>"${E2E_KIND_LOG}"
+printf '%s|%s\n' "${CONTAINERS_POLICY_JSON:-}" "$*" >>"${E2E_KIND_LOG}"
 EOF
 chmod +x "${test_dir}/bin/kind"
 E2E_KIND_LOG="${test_dir}/kind.log"
 export E2E_KIND_LOG
 
 e2e_cluster_exists podman || fail 'dedicated cluster was not detected'
+e2e_kind podman version
+[[ "$(<"${E2E_KIND_LOG}")" == \
+  "${e2e_podman_policy}|version" ]] || fail 'Kind omitted the E2E Podman policy'
+rm -- "${E2E_KIND_LOG}"
 
 if e2e_delete_cluster podman unrelated-cluster >/dev/null 2>&1; then
   fail 'cleanup accepted an unrelated cluster'
@@ -66,10 +70,12 @@ mkdir -p "${test_state_dir}"
 e2e_state_dir="${test_state_dir}"
 e2e_kubeconfig="${test_state_dir}/kubeconfig"
 e2e_provider_file="${test_state_dir}/provider"
+e2e_podman_policy="${test_state_dir}/podman-policy.json"
 e2e_delete_cluster podman "${e2e_cluster_name}"
 
 [[ "$(<"${E2E_KIND_LOG}")" == \
-  "delete cluster --name ${e2e_cluster_name}" ]] || fail 'unexpected Kind delete arguments'
+  "${e2e_podman_policy}|delete cluster --name ${e2e_cluster_name}" ]] ||
+  fail 'unexpected Kind delete arguments or Podman policy'
 
 cat >"${test_dir}/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
