@@ -73,6 +73,39 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+        - name: registration-gate
+          image: forgejo-ephemeral-runner-e2e-proxy:0.2.0-dev
+          imagePullPolicy: Never
+          env:
+            - name: LISTEN_ADDR
+              value: :3001
+            - name: UPSTREAM_URL
+              value: http://127.0.0.1:3000
+          ports:
+            - name: e2e-proxy
+              containerPort: 3001
+          readinessProbe:
+            httpGet:
+              path: /__e2e/health
+              port: e2e-proxy
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
       volumes:
         - name: data
           emptyDir:

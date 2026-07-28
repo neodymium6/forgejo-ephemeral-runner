@@ -9,7 +9,7 @@ patches:
     patch: |-
       - op: replace
         path: /data/FORGEJO_INSTANCE_URL
-        value: http://forgejo.forgejo-e2e.svc.cluster.local:3000
+        value: http://forgejo.forgejo-e2e.svc.cluster.local:3001
       - op: replace
         path: /data/FORGEJO_RUNNER_SCOPE
         value: repository:e2e-admin/e2e-repository

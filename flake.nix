@@ -30,6 +30,17 @@
               "-w"
             ];
           };
+          e2eProxy = pkgs.buildGoModule {
+            pname = "forgejo-ephemeral-runner-e2e-proxy";
+            inherit version;
+            src = pkgs.lib.cleanSource ./.;
+            vendorHash = null;
+            subPackages = [ "cmd/e2e-proxy" ];
+            ldflags = [
+              "-s"
+              "-w"
+            ];
+          };
           runOneJobScript = pkgs.writeShellApplication {
             name = "forgejo-ephemeral-one-job";
             runtimeInputs = [
@@ -79,6 +90,19 @@
               config = {
                 User = "65532:65532";
                 Entrypoint = [ "${controller}/bin/controller" ];
+                Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
+              };
+            };
+            e2e-proxy-image = pkgs.dockerTools.buildLayeredImage {
+              name = "forgejo-ephemeral-runner-e2e-proxy";
+              tag = version;
+              contents = [
+                e2eProxy
+                pkgs.cacert
+              ];
+              config = {
+                User = "65532:65532";
+                Entrypoint = [ "${e2eProxy}/bin/e2e-proxy" ];
                 Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
               };
             };

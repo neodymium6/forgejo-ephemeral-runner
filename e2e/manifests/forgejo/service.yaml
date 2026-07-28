@@ -11,3 +11,6 @@ spec:
     - name: http
       port: 3000
       targetPort: http
+    - name: e2e-proxy
+      port: 3001
+      targetPort: e2e-proxy
