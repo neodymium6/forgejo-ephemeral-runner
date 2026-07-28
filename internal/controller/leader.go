@@ -18,6 +18,7 @@ const (
 	defaultLeaseDuration = 15 * time.Second
 	defaultRenewDeadline = 10 * time.Second
 	defaultRetryPeriod   = 2 * time.Second
+	microTimeLayout      = "2006-01-02T15:04:05.000000Z07:00"
 )
 
 type LeaderElector struct {
@@ -339,5 +340,5 @@ func decodeLease(reader io.Reader) (kubernetesLease, error) {
 }
 
 func formatMicroTime(value time.Time) string {
-	return value.UTC().Format(time.RFC3339Nano)
+	return value.UTC().Truncate(time.Microsecond).Format(microTimeLayout)
 }

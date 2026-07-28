@@ -38,7 +38,7 @@ func writeLease(t *testing.T, w http.ResponseWriter, lease kubernetesLease, stat
 }
 
 func TestLeaderElectorCreatesMissingLease(t *testing.T) {
-	now := time.Date(2026, time.July, 28, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, time.July, 28, 12, 0, 0, 835038584, time.UTC)
 	var created kubernetesLease
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer service-account-token" {
@@ -73,6 +73,29 @@ func TestLeaderElectorCreatesMissingLease(t *testing.T) {
 	}
 	if created.Spec.LeaseDurationSeconds != 15 {
 		t.Fatalf("leaseDurationSeconds = %d", created.Spec.LeaseDurationSeconds)
+	}
+	const wantMicroTime = "2026-07-28T12:00:00.835038Z"
+	if created.Spec.AcquireTime != wantMicroTime || created.Spec.RenewTime != wantMicroTime {
+		t.Fatalf(
+			"Lease times = acquire %q, renew %q; want %q",
+			created.Spec.AcquireTime,
+			created.Spec.RenewTime,
+			wantMicroTime,
+		)
+	}
+}
+
+func TestFormatMicroTimeUsesUTCAndSixFractionalDigits(t *testing.T) {
+	location := time.FixedZone("test", 9*60*60)
+	value := time.Date(2026, time.July, 28, 21, 0, 0, 123456789, location)
+
+	got := formatMicroTime(value)
+	const want = "2026-07-28T12:00:00.123456Z"
+	if got != want {
+		t.Fatalf("formatMicroTime() = %q, want %q", got, want)
+	}
+	if _, err := time.Parse(microTimeLayout, got); err != nil {
+		t.Fatalf("formatMicroTime() returned invalid Kubernetes MicroTime: %v", err)
 	}
 }
 
