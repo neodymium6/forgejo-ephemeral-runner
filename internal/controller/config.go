@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,6 +21,8 @@ const (
 	defaultCredentialName      = "forgejo-ephemeral-runner-credential"
 	defaultPollInterval        = 2 * time.Second
 	defaultControllerUserAgent = "forgejo-ephemeral-runner-controller"
+	defaultMaxConcurrent       = 1
+	maxSupportedConcurrent     = 10
 )
 
 var (
@@ -34,6 +37,7 @@ type Config struct {
 	AllowInsecureHTTP    bool
 	Namespace            string
 	RunnerName           string
+	RunnerLabels         []string
 	RunnerPodName        string
 	RunnerImage          string
 	CredentialSecretName string
@@ -42,6 +46,7 @@ type Config struct {
 	KubernetesTokenPath  string
 	KubernetesCAPath     string
 	PollInterval         time.Duration
+	MaxConcurrent        int
 }
 
 func ConfigFromEnvironment() (Config, error) {
@@ -52,6 +57,7 @@ func ConfigFromEnvironment() (Config, error) {
 		AllowInsecureHTTP:    strings.EqualFold(strings.TrimSpace(os.Getenv("FORGEJO_INSECURE_ALLOW_HTTP")), "true"),
 		Namespace:            strings.TrimSpace(os.Getenv("POD_NAMESPACE")),
 		RunnerName:           strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_NAME")),
+		RunnerLabels:         splitRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS")),
 		RunnerPodName:        environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
 		RunnerImage:          strings.TrimSpace(os.Getenv("RUNNER_IMAGE")),
 		CredentialSecretName: environmentOrDefault("RUNNER_CREDENTIAL_SECRET_NAME", defaultCredentialName),
@@ -59,6 +65,7 @@ func ConfigFromEnvironment() (Config, error) {
 		KubernetesTokenPath:  environmentOrDefault("KUBERNETES_TOKEN_FILE", defaultKubernetesToken),
 		KubernetesCAPath:     environmentOrDefault("KUBERNETES_CA_FILE", defaultKubernetesCA),
 		PollInterval:         defaultPollInterval,
+		MaxConcurrent:        defaultMaxConcurrent,
 	}
 
 	if cfg.ForgejoURL == "" {
@@ -89,6 +96,12 @@ func ConfigFromEnvironment() (Config, error) {
 	if cfg.RunnerName == "" {
 		return Config{}, errors.New("FORGEJO_RUNNER_NAME is required")
 	}
+	if len(cfg.RunnerName) > 252 {
+		return Config{}, errors.New("FORGEJO_RUNNER_NAME must be at most 252 characters")
+	}
+	if len(cfg.RunnerLabels) == 0 {
+		return Config{}, errors.New("FORGEJO_RUNNER_LABELS must contain at least one label")
+	}
 	if cfg.RunnerImage == "" {
 		return Config{}, errors.New("RUNNER_IMAGE is required")
 	}
@@ -100,7 +113,7 @@ func ConfigFromEnvironment() (Config, error) {
 		"RUNNER_POD_NAME":               cfg.RunnerPodName,
 		"RUNNER_CREDENTIAL_SECRET_NAME": cfg.CredentialSecretName,
 	} {
-		if len(value) > 63 || !dnsLabel.MatchString(value) {
+		if len(value) > 61 || !dnsLabel.MatchString(value) {
 			return Config{}, fmt.Errorf("%s must be a DNS label", name)
 		}
 	}
@@ -125,7 +138,36 @@ func ConfigFromEnvironment() (Config, error) {
 		}
 		cfg.PollInterval = parsed
 	}
+	if raw := strings.TrimSpace(os.Getenv("MAX_CONCURRENT")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("parse MAX_CONCURRENT: %w", err)
+		}
+		cfg.MaxConcurrent = parsed
+	}
+	if cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > maxSupportedConcurrent {
+		return Config{}, fmt.Errorf("MAX_CONCURRENT must be between 1 and %d", maxSupportedConcurrent)
+	}
 	return cfg, nil
+}
+
+func splitRunnerLabels(raw string) []string {
+	var labels []string
+	seen := make(map[string]struct{})
+	for spec := range strings.SplitSeq(raw, ",") {
+		spec = strings.TrimSpace(spec)
+		label, _, _ := strings.Cut(spec, ":")
+		label = strings.TrimSpace(label)
+		if label == "" || strings.ContainsAny(spec, "\r\n\x00") {
+			continue
+		}
+		if _, duplicate := seen[label]; duplicate {
+			continue
+		}
+		seen[label] = struct{}{}
+		labels = append(labels, label)
+	}
+	return labels
 }
 
 func environmentOrDefault(name, fallback string) string {

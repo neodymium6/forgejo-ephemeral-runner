@@ -7,14 +7,34 @@ rules:
     resources: ["pods"]
     verbs: ["create"]
   - apiGroups: [""]
-    resourceNames: ["forgejo-ephemeral-runner-job"]
+    resourceNames:
+      - forgejo-ephemeral-runner-job-0
+      - forgejo-ephemeral-runner-job-1
+      - forgejo-ephemeral-runner-job-2
+      - forgejo-ephemeral-runner-job-3
+      - forgejo-ephemeral-runner-job-4
+      - forgejo-ephemeral-runner-job-5
+      - forgejo-ephemeral-runner-job-6
+      - forgejo-ephemeral-runner-job-7
+      - forgejo-ephemeral-runner-job-8
+      - forgejo-ephemeral-runner-job-9
     resources: ["pods"]
     verbs: ["get", "delete"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]
   - apiGroups: [""]
-    resourceNames: ["forgejo-ephemeral-runner-credential"]
+    resourceNames:
+      - forgejo-ephemeral-runner-credential-0
+      - forgejo-ephemeral-runner-credential-1
+      - forgejo-ephemeral-runner-credential-2
+      - forgejo-ephemeral-runner-credential-3
+      - forgejo-ephemeral-runner-credential-4
+      - forgejo-ephemeral-runner-credential-5
+      - forgejo-ephemeral-runner-credential-6
+      - forgejo-ephemeral-runner-credential-7
+      - forgejo-ephemeral-runner-credential-8
+      - forgejo-ephemeral-runner-credential-9
     resources: ["secrets"]
     verbs: ["get", "delete"]
 ---

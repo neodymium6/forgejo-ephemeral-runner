@@ -21,14 +21,15 @@ import (
 const runnerIDAnnotation = "forgejo-ephemeral-runner.dev/runner-id"
 
 type kubernetesClient struct {
-	httpClient      *http.Client
-	podsURL         string
-	secretsURL      string
-	podURL          string
-	credentialURL   string
-	token           string
-	podTemplate     *template.Template
-	podTemplateData runnerPodTemplateData
+	httpClient     *http.Client
+	podsURL        string
+	secretsURL     string
+	token          string
+	podTemplate    *template.Template
+	namespace      string
+	runnerPodName  string
+	credentialName string
+	runnerImage    string
 }
 
 type runnerPodTemplateData struct {
@@ -120,23 +121,41 @@ func NewKubernetesClient(cfg Config) (Kubernetes, error) {
 			Timeout:       15 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		podsURL:       podsURL,
-		secretsURL:    secretsURL,
-		podURL:        podsURL + "/" + url.PathEscape(cfg.RunnerPodName),
-		credentialURL: secretsURL + "/" + url.PathEscape(cfg.CredentialSecretName),
-		token:         token,
-		podTemplate:   podTemplate,
-		podTemplateData: runnerPodTemplateData{
-			Namespace:            cfg.Namespace,
-			PodName:              cfg.RunnerPodName,
-			CredentialSecretName: cfg.CredentialSecretName,
-			RunnerImage:          cfg.RunnerImage,
-		},
+		podsURL:        podsURL,
+		secretsURL:     secretsURL,
+		token:          token,
+		podTemplate:    podTemplate,
+		namespace:      cfg.Namespace,
+		runnerPodName:  cfg.RunnerPodName,
+		credentialName: cfg.CredentialSecretName,
+		runnerImage:    cfg.RunnerImage,
 	}, nil
 }
 
-func (c *kubernetesClient) GetPod(ctx context.Context) (PodState, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.podURL, nil)
+func (c *kubernetesClient) slotResources(slot int) (runnerPodTemplateData, string, string, error) {
+	if slot < 0 || slot >= maxSupportedConcurrent {
+		return runnerPodTemplateData{}, "", "", fmt.Errorf("runner slot must be between 0 and %d", maxSupportedConcurrent-1)
+	}
+	podName := resourceNameForSlot(c.runnerPodName, slot)
+	credentialName := resourceNameForSlot(c.credentialName, slot)
+	return runnerPodTemplateData{
+		Namespace:            c.namespace,
+		PodName:              podName,
+		CredentialSecretName: credentialName,
+		RunnerImage:          c.runnerImage,
+	}, c.podsURL + "/" + url.PathEscape(podName), c.secretsURL + "/" + url.PathEscape(credentialName), nil
+}
+
+func resourceNameForSlot(base string, slot int) string {
+	return fmt.Sprintf("%s-%d", base, slot)
+}
+
+func (c *kubernetesClient) GetPod(ctx context.Context, slot int) (PodState, error) {
+	_, podURL, _, err := c.slotResources(slot)
+	if err != nil {
+		return PodState{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, podURL, nil)
 	if err != nil {
 		return PodState{}, err
 	}
@@ -164,16 +183,20 @@ func (c *kubernetesClient) GetPod(ctx context.Context) (PodState, error) {
 	}, nil
 }
 
-func (c *kubernetesClient) CreatePod(ctx context.Context) error {
+func (c *kubernetesClient) CreatePod(ctx context.Context, slot int) error {
+	templateData, _, _, err := c.slotResources(slot)
+	if err != nil {
+		return err
+	}
 	var rendered bytes.Buffer
-	if err := c.podTemplate.Execute(&rendered, c.podTemplateData); err != nil {
+	if err := c.podTemplate.Execute(&rendered, templateData); err != nil {
 		return fmt.Errorf("render runner Pod template: %w", err)
 	}
 	var pod kubernetesPod
 	if err := json.Unmarshal(rendered.Bytes(), &pod); err != nil {
 		return fmt.Errorf("decode rendered runner Pod template: %w", err)
 	}
-	if pod.Metadata.Name != c.podTemplateData.PodName || pod.Metadata.Namespace != c.podTemplateData.Namespace {
+	if pod.Metadata.Name != templateData.PodName || pod.Metadata.Namespace != templateData.Namespace {
 		return errors.New("runner Pod template metadata does not match controller configuration")
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
@@ -200,12 +223,20 @@ func (c *kubernetesClient) CreatePod(ctx context.Context) error {
 	return nil
 }
 
-func (c *kubernetesClient) DeletePod(ctx context.Context) error {
-	return c.delete(ctx, c.podURL, "delete pod")
+func (c *kubernetesClient) DeletePod(ctx context.Context, slot int) error {
+	_, podURL, _, err := c.slotResources(slot)
+	if err != nil {
+		return err
+	}
+	return c.delete(ctx, podURL, "delete pod")
 }
 
-func (c *kubernetesClient) GetCredential(ctx context.Context) (CredentialState, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.credentialURL, nil)
+func (c *kubernetesClient) GetCredential(ctx context.Context, slot int) (CredentialState, error) {
+	_, _, credentialURL, err := c.slotResources(slot)
+	if err != nil {
+		return CredentialState{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, credentialURL, nil)
 	if err != nil {
 		return CredentialState{}, err
 	}
@@ -230,22 +261,34 @@ func (c *kubernetesClient) GetCredential(ctx context.Context) (CredentialState, 
 	if err != nil {
 		return CredentialState{}, err
 	}
-	return CredentialState{Exists: true, RunnerID: runnerID}, nil
+	jobHandle := string(secret.Data["handle"])
+	if strings.TrimSpace(jobHandle) == "" {
+		return CredentialState{}, errors.New("runner credential has an empty job handle")
+	}
+	return CredentialState{Exists: true, RunnerID: runnerID, JobHandle: jobHandle}, nil
 }
 
-func (c *kubernetesClient) CreateCredential(ctx context.Context, registration Registration) error {
+func (c *kubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) error {
+	templateData, _, _, err := c.slotResources(slot)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(jobHandle) == "" {
+		return errors.New("job handle is empty")
+	}
 	secret := kubernetesSecret{
 		APIVersion: "v1",
 		Kind:       "Secret",
 		Immutable:  true,
 		Type:       "Opaque",
 		Data: map[string][]byte{
-			"uuid":  []byte(registration.UUID),
-			"token": []byte(registration.Token),
+			"uuid":   []byte(registration.UUID),
+			"token":  []byte(registration.Token),
+			"handle": []byte(jobHandle),
 		},
 	}
-	secret.Metadata.Name = c.podTemplateData.CredentialSecretName
-	secret.Metadata.Namespace = c.podTemplateData.Namespace
+	secret.Metadata.Name = templateData.CredentialSecretName
+	secret.Metadata.Namespace = templateData.Namespace
 	secret.Metadata.Labels = map[string]string{"app.kubernetes.io/managed-by": "forgejo-ephemeral-runner"}
 	secret.Metadata.Annotations = map[string]string{runnerIDAnnotation: fmt.Sprintf("%d", registration.ID)}
 	body, err := json.Marshal(secret)
@@ -270,8 +313,12 @@ func (c *kubernetesClient) CreateCredential(ctx context.Context, registration Re
 	return nil
 }
 
-func (c *kubernetesClient) DeleteCredential(ctx context.Context) error {
-	return c.delete(ctx, c.credentialURL, "delete credential")
+func (c *kubernetesClient) DeleteCredential(ctx context.Context, slot int) error {
+	_, _, credentialURL, err := c.slotResources(slot)
+	if err != nil {
+		return err
+	}
+	return c.delete(ctx, credentialURL, "delete credential")
 }
 
 func (c *kubernetesClient) delete(ctx context.Context, target, operation string) error {

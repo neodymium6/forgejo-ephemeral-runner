@@ -10,17 +10,19 @@ import (
 )
 
 type fakeForgejo struct {
-	runners       []RemoteRunner
-	registration  Registration
-	listCalls     int
-	registerCalls int
-	deleted       []int64
-	registerErr   error
-	deleteErr     error
+	jobs            []RemoteJob
+	runners         []RemoteRunner
+	registration    Registration
+	listCalls       int
+	registerCalls   int
+	registeredNames []string
+	deleted         []int64
+	registerErr     error
+	deleteErr       error
 }
 
 func (f *fakeForgejo) ListJobs(context.Context, []string) ([]RemoteJob, error) {
-	return nil, nil
+	return f.jobs, nil
 }
 
 func (f *fakeForgejo) ListRunners(context.Context) ([]RemoteRunner, error) {
@@ -28,8 +30,9 @@ func (f *fakeForgejo) ListRunners(context.Context) ([]RemoteRunner, error) {
 	return f.runners, nil
 }
 
-func (f *fakeForgejo) RegisterRunner(context.Context, string, string) (Registration, error) {
+func (f *fakeForgejo) RegisterRunner(_ context.Context, name, _ string) (Registration, error) {
 	f.registerCalls++
+	f.registeredNames = append(f.registeredNames, name)
 	return f.registration, f.registerErr
 }
 
@@ -47,32 +50,34 @@ type fakeKubernetes struct {
 	deleteCredentialCalls int
 	createPodErr          error
 	createCredentialErr   error
+	credentialHandles     []string
 }
 
-func (f *fakeKubernetes) GetPod(context.Context) (PodState, error) {
+func (f *fakeKubernetes) GetPod(context.Context, int) (PodState, error) {
 	return f.pod, nil
 }
 
-func (f *fakeKubernetes) CreatePod(context.Context) error {
+func (f *fakeKubernetes) CreatePod(context.Context, int) error {
 	f.createPodCalls++
 	return f.createPodErr
 }
 
-func (f *fakeKubernetes) DeletePod(context.Context) error {
+func (f *fakeKubernetes) DeletePod(context.Context, int) error {
 	f.deletePodCalls++
 	return nil
 }
 
-func (f *fakeKubernetes) GetCredential(context.Context) (CredentialState, error) {
+func (f *fakeKubernetes) GetCredential(context.Context, int) (CredentialState, error) {
 	return f.credential, nil
 }
 
-func (f *fakeKubernetes) CreateCredential(context.Context, Registration) error {
+func (f *fakeKubernetes) CreateCredential(_ context.Context, _ int, _ Registration, handle string) error {
 	f.createCredentialCalls++
+	f.credentialHandles = append(f.credentialHandles, handle)
 	return f.createCredentialErr
 }
 
-func (f *fakeKubernetes) DeleteCredential(context.Context) error {
+func (f *fakeKubernetes) DeleteCredential(context.Context, int) error {
 	f.deleteCredentialCalls++
 	return nil
 }
@@ -81,8 +86,10 @@ func testConfig() Config {
 	return Config{
 		Namespace:            "forgejo-runners",
 		RunnerName:           "ephemeral-slot-0",
+		RunnerLabels:         []string{"linux-amd64"},
 		RunnerPodName:        "runner-job",
 		CredentialSecretName: "runner-credential",
+		MaxConcurrent:        1,
 	}
 }
 
@@ -92,7 +99,10 @@ func testLogger() *log.Logger {
 
 func TestReconcileCreatesFreshRunner(t *testing.T) {
 	registration := Registration{ID: 42, UUID: "uuid", Token: "token"}
-	forgejo := &fakeForgejo{registration: registration}
+	forgejo := &fakeForgejo{
+		jobs:         []RemoteJob{{ID: 11, Attempt: 0, Handle: "job-handle", Status: "waiting"}},
+		registration: registration,
+	}
 	kubernetes := &fakeKubernetes{}
 
 	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
@@ -142,7 +152,7 @@ func TestReconcileCleansCredentialAfterPodDisappears(t *testing.T) {
 func TestReconcileRemovesManagedStaleRunner(t *testing.T) {
 	forgejo := &fakeForgejo{runners: []RemoteRunner{{
 		ID:          7,
-		Name:        "ephemeral-slot-0",
+		Name:        "ephemeral-slot-0-0",
 		Description: managedDescription,
 		Ephemeral:   true,
 	}}}
@@ -160,12 +170,13 @@ func TestReconcileRemovesManagedStaleRunner(t *testing.T) {
 }
 
 func TestReconcileRefusesRunnerNameCollision(t *testing.T) {
-	forgejo := &fakeForgejo{runners: []RemoteRunner{{
-		ID:          7,
-		Name:        "ephemeral-slot-0",
-		Description: "created elsewhere",
-		Ephemeral:   true,
-	}}}
+	forgejo := &fakeForgejo{jobs: []RemoteJob{{ID: 11, Attempt: 1, Handle: "job-handle", Status: "waiting"}},
+		runners: []RemoteRunner{{
+			ID:          7,
+			Name:        "ephemeral-slot-0-0",
+			Description: "created elsewhere",
+			Ephemeral:   true,
+		}}}
 
 	err := Reconcile(context.Background(), testConfig(), forgejo, &fakeKubernetes{}, testLogger())
 	if err == nil {
@@ -178,7 +189,10 @@ func TestReconcileRefusesRunnerNameCollision(t *testing.T) {
 
 func TestReconcileCleansRegistrationAfterCredentialFailure(t *testing.T) {
 	registration := Registration{ID: 42, UUID: "uuid", Token: "token"}
-	forgejo := &fakeForgejo{registration: registration}
+	forgejo := &fakeForgejo{
+		jobs:         []RemoteJob{{ID: 11, Attempt: 1, Handle: "job-handle", Status: "waiting"}},
+		registration: registration,
+	}
 	kubernetes := &fakeKubernetes{createCredentialErr: errors.New("injected failure")}
 
 	err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger())
@@ -217,5 +231,49 @@ func TestScopeAPIPathRejectsMalformedScope(t *testing.T) {
 				t.Fatalf("scopeAPIPath(%q) succeeded", input)
 			}
 		})
+	}
+}
+
+func TestReconcileScalesToZeroWithoutWaitingJobs(t *testing.T) {
+	forgejo := &fakeForgejo{}
+	kubernetes := &fakeKubernetes{}
+
+	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if forgejo.registerCalls != 0 {
+		t.Fatalf("RegisterRunner calls = %d, want 0", forgejo.registerCalls)
+	}
+	if kubernetes.createPodCalls != 0 || kubernetes.createCredentialCalls != 0 {
+		t.Fatalf("unexpected Kubernetes creates: pod=%d credential=%d", kubernetes.createPodCalls, kubernetes.createCredentialCalls)
+	}
+}
+
+func TestReconcileHonorsMaxConcurrentAndTargetsWaitingJobs(t *testing.T) {
+	cfg := testConfig()
+	cfg.MaxConcurrent = 2
+	registration := Registration{ID: 42, UUID: "uuid", Token: "token"}
+	forgejo := &fakeForgejo{
+		jobs: []RemoteJob{
+			{ID: 11, Attempt: 1, Handle: "first-handle", Status: "waiting"},
+			{ID: 12, Attempt: 1, Handle: "second-handle", Status: "waiting"},
+			{ID: 13, Attempt: 1, Handle: "running-handle", Status: "running"},
+		},
+		registration: registration,
+	}
+	kubernetes := &fakeKubernetes{}
+
+	if err := Reconcile(context.Background(), cfg, forgejo, kubernetes, testLogger()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if forgejo.registerCalls != 2 {
+		t.Fatalf("RegisterRunner calls = %d, want 2", forgejo.registerCalls)
+	}
+	wantNames := []string{"ephemeral-slot-0-0", "ephemeral-slot-0-1"}
+	if !reflect.DeepEqual(forgejo.registeredNames, wantNames) {
+		t.Fatalf("registered names = %v, want %v", forgejo.registeredNames, wantNames)
+	}
+	if !reflect.DeepEqual(kubernetes.credentialHandles, []string{"first-handle", "second-handle"}) {
+		t.Fatalf("credential handles = %v", kubernetes.credentialHandles)
 	}
 }

@@ -2,7 +2,10 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -55,5 +58,46 @@ func TestBaseRunnerPodTemplate(t *testing.T) {
 	runner := containers[0].(map[string]any)
 	if runner["image"] != data.RunnerImage {
 		t.Fatalf("runner image = %q, want %q", runner["image"], data.RunnerImage)
+	}
+}
+
+func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
+	var received kubernetesSecret
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/secrets" {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode Secret: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	client := &kubernetesClient{
+		httpClient:     server.Client(),
+		podsURL:        server.URL + "/pods",
+		secretsURL:     server.URL + "/secrets",
+		namespace:      "forgejo-runners",
+		runnerPodName:  "runner-job",
+		credentialName: "runner-credential",
+		runnerImage:    "runner:latest",
+	}
+	registration := Registration{ID: 42, UUID: "runner-uuid", Token: "runner-token"}
+	if err := client.CreateCredential(context.Background(), 2, registration, "job-handle"); err != nil {
+		t.Fatalf("CreateCredential() error = %v", err)
+	}
+	if received.Metadata.Name != "runner-credential-2" || received.Metadata.Namespace != "forgejo-runners" {
+		t.Fatalf("Secret metadata = %s/%s", received.Metadata.Namespace, received.Metadata.Name)
+	}
+	if got := string(received.Data["handle"]); got != "job-handle" {
+		t.Fatalf("handle = %q", got)
+	}
+	if got := string(received.Data["uuid"]); got != registration.UUID {
+		t.Fatalf("uuid = %q", got)
+	}
+	if !received.Immutable {
+		t.Fatal("runner credential Secret is mutable")
 	}
 }

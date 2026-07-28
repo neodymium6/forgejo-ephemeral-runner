@@ -8,3 +8,4 @@ data:
   FORGEJO_RUNNER_NAME: kubernetes-ephemeral
   FORGEJO_RUNNER_LABELS: linux-amd64:host
   RUNNER_IMAGE: forgejo-ephemeral-runner:0.2.0-dev
+  MAX_CONCURRENT: "1"
