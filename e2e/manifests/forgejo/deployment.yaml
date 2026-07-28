@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo
+  namespace: forgejo-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo
+        app.kubernetes.io/component: server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: forgejo
+          # yamllint disable-line rule:line-length
+          image: codeberg.org/forgejo/forgejo@sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: USER_UID
+              value: "1000"
+            - name: USER_GID
+              value: "1000"
+            - name: FORGEJO__database__DB_TYPE
+              value: sqlite3
+            - name: FORGEJO__database__PATH
+              value: /data/forgejo/forgejo.db
+            - name: FORGEJO__server__DOMAIN
+              value: forgejo.forgejo-e2e.svc.cluster.local
+            - name: FORGEJO__server__ROOT_URL
+              value: http://forgejo.forgejo-e2e.svc.cluster.local:3000/
+            - name: FORGEJO__server__HTTP_PORT
+              value: "3000"
+            - name: FORGEJO__server__DISABLE_SSH
+              value: "true"
+            - name: FORGEJO__security__INSTALL_LOCK
+              value: "true"
+            - name: FORGEJO__service__DISABLE_REGISTRATION
+              value: "true"
+            - name: FORGEJO__actions__ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+              ephemeral-storage: 512Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+              ephemeral-storage: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 2Gi

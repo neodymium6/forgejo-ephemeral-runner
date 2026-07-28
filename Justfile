@@ -19,12 +19,16 @@ unit:
 audit:
     go vet ./...
     shellcheck scripts/*.sh e2e/*.sh
-    yamllint -s deploy
+    yamllint -s deploy e2e/manifests e2e/fixtures
 
 manifests-check:
     kustomize build deploy/base | kubeconform -strict -summary
 
-check: fmt-check unit audit manifests-check
+e2e-manifests-check:
+    kustomize build e2e/manifests/forgejo | kubeconform -strict -summary
+    kustomize build e2e/manifests/controller | kubeconform -strict -summary
+
+check: fmt-check unit audit manifests-check e2e-manifests-check
     nix flake check
 
 images:

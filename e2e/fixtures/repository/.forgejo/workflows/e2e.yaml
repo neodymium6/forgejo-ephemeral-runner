@@ -1,0 +1,16 @@
+name: Ephemeral runner E2E
+
+"on":
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: e2e-linux
+    steps:
+      - name: Verify the isolated runner environment
+        run: |
+          set -eu
+          test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+          test "${HOME}" = /home/runner
+          test "${PWD}" = /workspace/e2e-admin/e2e-repository
+          printf '%s\n' 'ephemeral runner E2E succeeded'

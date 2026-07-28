@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../deploy/base
+patches:
+  - target:
+      kind: ConfigMap
+      name: forgejo-runner-settings
+    patch: |-
+      - op: replace
+        path: /data/FORGEJO_INSTANCE_URL
+        value: http://forgejo.forgejo-e2e.svc.cluster.local:3000
+      - op: replace
+        path: /data/FORGEJO_RUNNER_SCOPE
+        value: repository:e2e-admin/e2e-repository
+      - op: replace
+        path: /data/FORGEJO_RUNNER_NAME
+        value: e2e-ephemeral
+      - op: replace
+        path: /data/FORGEJO_RUNNER_LABELS
+        value: e2e-linux:host
+      - op: add
+        path: /data/FORGEJO_INSECURE_ALLOW_HTTP
+        value: "true"
+      - op: replace
+        path: /data/MAX_CONCURRENT
+        value: "1"
