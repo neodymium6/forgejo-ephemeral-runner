@@ -8,4 +8,5 @@ data:
   FORGEJO_RUNNER_NAME: kubernetes-ephemeral
   FORGEJO_RUNNER_LABELS: linux-amd64:host
   RUNNER_IMAGE: forgejo-ephemeral-runner:0.2.0-dev
+  LEADER_ELECTION_LEASE_NAME: forgejo-ephemeral-runner-controller
   MAX_CONCURRENT: "1"

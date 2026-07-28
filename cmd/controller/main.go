@@ -31,11 +31,19 @@ func main() {
 		logger.Printf("create Kubernetes client: %v", err)
 		os.Exit(2)
 	}
+	leaderElector, err := controller.NewLeaderElector(cfg, kubernetesClient, logger)
+	if err != nil {
+		logger.Printf("create leader elector: %v", err)
+		os.Exit(2)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if err := controller.Run(ctx, cfg, forgejoClient, kubernetesClient, logger); err != nil && !errors.Is(err, context.Canceled) {
+	err = leaderElector.Run(ctx, func(leaderCtx context.Context) error {
+		return controller.Run(leaderCtx, cfg, forgejoClient, kubernetesClient, logger)
+	})
+	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Printf("fatal: %v", err)
 		os.Exit(1)
 	}

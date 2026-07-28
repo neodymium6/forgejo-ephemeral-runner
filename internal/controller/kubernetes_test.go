@@ -75,7 +75,7 @@ func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &kubernetesClient{
+	client := &KubernetesClient{
 		httpClient:     server.Client(),
 		podsURL:        server.URL + "/pods",
 		secretsURL:     server.URL + "/secrets",

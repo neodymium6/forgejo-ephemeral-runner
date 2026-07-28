@@ -37,6 +37,13 @@ rules:
       - forgejo-ephemeral-runner-credential-9
     resources: ["secrets"]
     verbs: ["get", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resourceNames: ["forgejo-ephemeral-runner-controller"]
+    resources: ["leases"]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

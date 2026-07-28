@@ -20,7 +20,7 @@ import (
 
 const runnerIDAnnotation = "forgejo-ephemeral-runner.dev/runner-id"
 
-type kubernetesClient struct {
+type KubernetesClient struct {
 	httpClient     *http.Client
 	podsURL        string
 	secretsURL     string
@@ -68,7 +68,7 @@ type kubernetesSecret struct {
 	Data      map[string][]byte `json:"data,omitempty"`
 }
 
-func NewKubernetesClient(cfg Config) (Kubernetes, error) {
+func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
 	baseURL, err := url.Parse(cfg.KubernetesAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse Kubernetes API URL: %w", err)
@@ -115,7 +115,7 @@ func NewKubernetesClient(cfg Config) (Kubernetes, error) {
 	podsURL := apiBase.String() + "/pods"
 	secretsURL := apiBase.String() + "/secrets"
 
-	return &kubernetesClient{
+	return &KubernetesClient{
 		httpClient: &http.Client{
 			Transport:     transport,
 			Timeout:       15 * time.Second,
@@ -132,7 +132,7 @@ func NewKubernetesClient(cfg Config) (Kubernetes, error) {
 	}, nil
 }
 
-func (c *kubernetesClient) slotResources(slot int) (runnerPodTemplateData, string, string, error) {
+func (c *KubernetesClient) slotResources(slot int) (runnerPodTemplateData, string, string, error) {
 	if slot < 0 || slot >= maxSupportedConcurrent {
 		return runnerPodTemplateData{}, "", "", fmt.Errorf("runner slot must be between 0 and %d", maxSupportedConcurrent-1)
 	}
@@ -150,7 +150,7 @@ func resourceNameForSlot(base string, slot int) string {
 	return fmt.Sprintf("%s-%d", base, slot)
 }
 
-func (c *kubernetesClient) GetPod(ctx context.Context, slot int) (PodState, error) {
+func (c *KubernetesClient) GetPod(ctx context.Context, slot int) (PodState, error) {
 	_, podURL, _, err := c.slotResources(slot)
 	if err != nil {
 		return PodState{}, err
@@ -183,7 +183,7 @@ func (c *kubernetesClient) GetPod(ctx context.Context, slot int) (PodState, erro
 	}, nil
 }
 
-func (c *kubernetesClient) CreatePod(ctx context.Context, slot int) error {
+func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	templateData, _, _, err := c.slotResources(slot)
 	if err != nil {
 		return err
@@ -223,7 +223,7 @@ func (c *kubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	return nil
 }
 
-func (c *kubernetesClient) DeletePod(ctx context.Context, slot int) error {
+func (c *KubernetesClient) DeletePod(ctx context.Context, slot int) error {
 	_, podURL, _, err := c.slotResources(slot)
 	if err != nil {
 		return err
@@ -231,7 +231,7 @@ func (c *kubernetesClient) DeletePod(ctx context.Context, slot int) error {
 	return c.delete(ctx, podURL, "delete pod")
 }
 
-func (c *kubernetesClient) GetCredential(ctx context.Context, slot int) (CredentialState, error) {
+func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (CredentialState, error) {
 	_, _, credentialURL, err := c.slotResources(slot)
 	if err != nil {
 		return CredentialState{}, err
@@ -268,7 +268,7 @@ func (c *kubernetesClient) GetCredential(ctx context.Context, slot int) (Credent
 	return CredentialState{Exists: true, RunnerID: runnerID, JobHandle: jobHandle}, nil
 }
 
-func (c *kubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) error {
+func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) error {
 	templateData, _, _, err := c.slotResources(slot)
 	if err != nil {
 		return err
@@ -313,7 +313,7 @@ func (c *kubernetesClient) CreateCredential(ctx context.Context, slot int, regis
 	return nil
 }
 
-func (c *kubernetesClient) DeleteCredential(ctx context.Context, slot int) error {
+func (c *KubernetesClient) DeleteCredential(ctx context.Context, slot int) error {
 	_, _, credentialURL, err := c.slotResources(slot)
 	if err != nil {
 		return err
@@ -321,7 +321,7 @@ func (c *kubernetesClient) DeleteCredential(ctx context.Context, slot int) error
 	return c.delete(ctx, credentialURL, "delete credential")
 }
 
-func (c *kubernetesClient) delete(ctx context.Context, target, operation string) error {
+func (c *KubernetesClient) delete(ctx context.Context, target, operation string) error {
 	body := strings.NewReader(`{"apiVersion":"v1","kind":"DeleteOptions","gracePeriodSeconds":5}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, body)
 	if err != nil {
@@ -342,7 +342,7 @@ func (c *kubernetesClient) delete(ctx context.Context, target, operation string)
 	}
 }
 
-func (c *kubernetesClient) authorize(req *http.Request) {
+func (c *KubernetesClient) authorize(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", defaultControllerUserAgent)

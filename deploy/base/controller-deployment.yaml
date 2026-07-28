@@ -3,10 +3,13 @@ kind: Deployment
 metadata:
   name: forgejo-ephemeral-runner-controller
 spec:
-  replicas: 1
+  replicas: 2
   revisionHistoryLimit: 2
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: forgejo-ephemeral-runner
@@ -19,6 +22,16 @@ spec:
     spec:
       automountServiceAccountToken: false
       serviceAccountName: forgejo-runner-controller
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: forgejo-ephemeral-runner
+                    app.kubernetes.io/component: controller
+                topologyKey: kubernetes.io/hostname
       terminationGracePeriodSeconds: 30
       securityContext:
         seccompProfile:
@@ -35,6 +48,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

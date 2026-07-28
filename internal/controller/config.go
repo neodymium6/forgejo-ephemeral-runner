@@ -22,6 +22,7 @@ const (
 	defaultPollInterval        = 2 * time.Second
 	defaultControllerUserAgent = "forgejo-ephemeral-runner-controller"
 	defaultMaxConcurrent       = 1
+	defaultLeaderLeaseName     = "forgejo-ephemeral-runner-controller"
 	maxSupportedConcurrent     = 10
 )
 
@@ -38,6 +39,8 @@ type Config struct {
 	Namespace            string
 	RunnerName           string
 	RunnerLabels         []string
+	ControllerIdentity   string
+	LeaderLeaseName      string
 	RunnerPodName        string
 	RunnerImage          string
 	CredentialSecretName string
@@ -59,6 +62,8 @@ func ConfigFromEnvironment() (Config, error) {
 		RunnerName:           strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_NAME")),
 		RunnerLabels:         splitRunnerLabels(os.Getenv("FORGEJO_RUNNER_LABELS")),
 		RunnerPodName:        environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
+		ControllerIdentity:   strings.TrimSpace(os.Getenv("POD_NAME")),
+		LeaderLeaseName:      environmentOrDefault("LEADER_ELECTION_LEASE_NAME", defaultLeaderLeaseName),
 		RunnerImage:          strings.TrimSpace(os.Getenv("RUNNER_IMAGE")),
 		CredentialSecretName: environmentOrDefault("RUNNER_CREDENTIAL_SECRET_NAME", defaultCredentialName),
 		PodTemplatePath:      environmentOrDefault("RUNNER_POD_TEMPLATE_FILE", defaultPodTemplatePath),
@@ -102,6 +107,12 @@ func ConfigFromEnvironment() (Config, error) {
 	if len(cfg.RunnerLabels) == 0 {
 		return Config{}, errors.New("FORGEJO_RUNNER_LABELS must contain at least one label")
 	}
+	if cfg.ControllerIdentity == "" {
+		return Config{}, errors.New("POD_NAME is required")
+	}
+	if len(cfg.ControllerIdentity) > 63 || !dnsLabel.MatchString(cfg.ControllerIdentity) {
+		return Config{}, errors.New("POD_NAME must be a DNS label")
+	}
 	if cfg.RunnerImage == "" {
 		return Config{}, errors.New("RUNNER_IMAGE is required")
 	}
@@ -119,6 +130,9 @@ func ConfigFromEnvironment() (Config, error) {
 	}
 
 	host := strings.TrimSpace(os.Getenv("KUBERNETES_SERVICE_HOST"))
+	if len(cfg.LeaderLeaseName) > 63 || !dnsLabel.MatchString(cfg.LeaderLeaseName) {
+		return Config{}, errors.New("LEADER_ELECTION_LEASE_NAME must be a DNS label")
+	}
 	port := environmentOrDefault("KUBERNETES_SERVICE_PORT_HTTPS", "443")
 	cfg.KubernetesAPIURL = strings.TrimSpace(os.Getenv("KUBERNETES_API_URL"))
 	if cfg.KubernetesAPIURL == "" {

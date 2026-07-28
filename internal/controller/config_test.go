@@ -11,6 +11,7 @@ func setValidConfigEnvironment(t *testing.T) {
 	t.Setenv("FORGEJO_RUNNER_SCOPE", "repository:example/project")
 	t.Setenv("POD_NAMESPACE", "forgejo-runners")
 	t.Setenv("FORGEJO_RUNNER_NAME", "kubernetes-ephemeral")
+	t.Setenv("POD_NAME", "controller-0")
 	t.Setenv("FORGEJO_RUNNER_LABELS", "linux-amd64:host, nix")
 	t.Setenv("RUNNER_IMAGE", "registry.example.com/runner:latest")
 	t.Setenv("KUBERNETES_API_URL", "")
