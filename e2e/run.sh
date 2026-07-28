@@ -73,8 +73,11 @@ e2e_run_succeeded() {
   local response
   response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runs?limit=1")" || return
   jq -e '
-    .workflow_runs[0].status == "completed" and
-    .workflow_runs[0].conclusion == "success"
+    (.workflow_runs[0].status == "success") or
+    (
+      .workflow_runs[0].status == "completed" and
+      .workflow_runs[0].conclusion == "success"
+    )
   ' <<<"${response}" >/dev/null
 }
 
