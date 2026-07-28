@@ -14,10 +14,11 @@ fmt-check:
 unit:
     go test -race ./...
     bash scripts/run-one-job_test.sh
+    bash e2e/lib_test.sh
 
 audit:
     go vet ./...
-    shellcheck scripts/*.sh
+    shellcheck scripts/*.sh e2e/*.sh
     yamllint -s deploy
 
 manifests-check:
@@ -28,3 +29,9 @@ check: fmt-check unit audit manifests-check
 
 images:
     nix build .#runner-image .#controller-image
+
+e2e-preflight:
+    bash e2e/preflight.sh
+
+e2e-clean:
+    bash e2e/cleanup.sh

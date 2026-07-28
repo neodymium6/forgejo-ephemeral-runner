@@ -1,6 +1,7 @@
 /result
 result
 result-*
+.e2e/
 .direnv/
 .env
 .env.*

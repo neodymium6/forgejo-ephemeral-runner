@@ -123,21 +123,25 @@
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              forgejo-runner
-              go_1_26
-              golangci-lint
-              gopls
-              gotools
-              just
-              kubeconform
-              kubectl
-              kustomize
-              nixfmt-tree
-              shellcheck
-              skopeo
-              yamllint
-            ];
+            packages =
+              with pkgs;
+              [
+                forgejo-runner
+                kind
+                go_1_26
+                golangci-lint
+                gopls
+                gotools
+                just
+                kubeconform
+                kubectl
+                kustomize
+                nixfmt-tree
+                shellcheck
+                skopeo
+                yamllint
+              ]
+              ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.podman ];
             shellHook = ''
               export GOTOOLCHAIN=local
             '';
