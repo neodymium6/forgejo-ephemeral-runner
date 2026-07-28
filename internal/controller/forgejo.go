@@ -105,7 +105,7 @@ func (c *forgejoClient) ListJobs(ctx context.Context, labels []string) ([]Remote
 	if err != nil {
 		return nil, fmt.Errorf("list jobs: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, forgejoResponseError("list jobs", resp)
 	}
@@ -139,15 +139,17 @@ func (c *forgejoClient) ListRunners(ctx context.Context) ([]RemoteRunner, error)
 		}
 		if resp.StatusCode != http.StatusOK {
 			err := forgejoResponseError("list runners", resp)
-			resp.Body.Close()
-			return nil, err
+			return nil, errors.Join(err, resp.Body.Close())
 		}
 
 		var page []RemoteRunner
 		err = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&page)
-		resp.Body.Close()
+		closeErr := resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("decode runner list: %w", err)
+			return nil, errors.Join(fmt.Errorf("decode runner list: %w", err), closeErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close runner list response: %w", closeErr)
 		}
 		runners = append(runners, page...)
 		if len(page) < pageSize {
@@ -179,7 +181,7 @@ func (c *forgejoClient) RegisterRunner(ctx context.Context, name, description st
 	if err != nil {
 		return Registration{}, fmt.Errorf("register runner: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		return Registration{}, forgejoResponseError("register runner", resp)
 	}
@@ -206,7 +208,7 @@ func (c *forgejoClient) DeleteRunner(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("delete runner: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusNoContent, http.StatusNotFound:
 		return nil

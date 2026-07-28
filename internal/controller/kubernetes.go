@@ -79,7 +79,7 @@ func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Kubernetes API URL: %w", err)
 	}
-	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && cfg.KubernetesAllowInsecureHTTP) {
+	if baseURL.Scheme != "https" && (baseURL.Scheme != "http" || !cfg.KubernetesAllowInsecureHTTP) {
 		return nil, errors.New("Kubernetes API URL must use HTTPS unless KUBERNETES_INSECURE_ALLOW_HTTP=true")
 	}
 
@@ -204,7 +204,7 @@ func (c *KubernetesClient) GetPod(ctx context.Context, slot int) (PodState, erro
 	if err != nil {
 		return PodState{}, fmt.Errorf("get pod: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return PodState{}, nil
 	}
@@ -267,7 +267,7 @@ func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	if err != nil {
 		return fmt.Errorf("create pod: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		return kubernetesResponseError("create pod", resp)
 	}
@@ -296,7 +296,7 @@ func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (Credent
 	if err != nil {
 		return CredentialState{}, fmt.Errorf("get credential: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return CredentialState{}, nil
 	}
@@ -366,7 +366,7 @@ func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, regis
 	if err != nil {
 		return "", fmt.Errorf("create credential: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		return "", kubernetesResponseError("create credential", resp)
 	}
@@ -411,7 +411,7 @@ func (c *KubernetesClient) delete(ctx context.Context, target, operation, uid st
 	if err != nil {
 		return fmt.Errorf("%s: %w", operation, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusAccepted, http.StatusNotFound:
 		return nil

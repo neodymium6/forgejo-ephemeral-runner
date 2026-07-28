@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -48,5 +47,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Fprintln(os.Stdout, "controller: stopped")
+	logger.Print("stopped")
 }

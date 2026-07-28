@@ -18,6 +18,7 @@ unit:
 
 audit:
     go vet ./...
+    golangci-lint run ./...
     shellcheck scripts/*.sh e2e/*.sh
     yamllint -s deploy e2e/manifests e2e/fixtures
 

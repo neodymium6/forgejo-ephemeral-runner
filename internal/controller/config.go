@@ -102,7 +102,7 @@ func ConfigFromEnvironment() (Config, error) {
 	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL must not contain a query or fragment")
 	}
-	if parsedURL.Scheme != "https" && !(parsedURL.Scheme == "http" && cfg.ForgejoAllowInsecureHTTP) {
+	if parsedURL.Scheme != "https" && (parsedURL.Scheme != "http" || !cfg.ForgejoAllowInsecureHTTP) {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL must use HTTPS unless FORGEJO_INSECURE_ALLOW_HTTP=true")
 	}
 	if _, err := scopeAPIPath(cfg.ForgejoScope); err != nil {

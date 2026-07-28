@@ -242,7 +242,7 @@ func (e *LeaderElector) getLease(ctx context.Context) (kubernetesLease, int, err
 	if err != nil {
 		return kubernetesLease{}, 0, fmt.Errorf("get leader Lease: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return kubernetesLease{}, resp.StatusCode, nil
 	}
@@ -271,7 +271,7 @@ func (e *LeaderElector) createLease(ctx context.Context, lease kubernetesLease, 
 	if err != nil {
 		return false, fmt.Errorf("create leader Lease: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusConflict {
 		return false, nil
 	}
@@ -301,7 +301,7 @@ func (e *LeaderElector) updateLease(ctx context.Context, lease kubernetesLease, 
 	if err != nil {
 		return false, fmt.Errorf("update leader Lease: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusConflict {
 		return false, nil
 	}
