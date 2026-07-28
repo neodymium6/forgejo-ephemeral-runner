@@ -151,5 +151,5 @@ and explicit trust policy instead of a writable shared `/nix` volume.
   requests, limits, quotas, and monitoring remain required.
 - The remote-registration/local-state transaction boundary is mitigated by
   deterministic recovery rather than eliminated.
-- A disposable-Forgejo integration and failure-injection suite is not yet
-  included.
+- Failure injection at the remote-registration/local-state transaction boundary
+  is not yet included.

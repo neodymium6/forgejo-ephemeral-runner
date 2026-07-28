@@ -18,7 +18,10 @@ succeeds without a Kubernetes service account token, and the runner Pod,
 credential Secret, and Forgejo registration are removed afterward. A second
 scenario dispatches two workflows, verifies that two isolated runner Pods exist
 at the same time under `MAX_CONCURRENT=2`, and verifies complete cleanup after
-both workflows succeed.
+both workflows succeed. A final scenario deletes the active controller Pod,
+waits for a different replica to acquire the Lease, and verifies that a queued
+workflow still runs and cleans up while the Deployment returns to two ready
+replicas.
 
 ## Requirements
 

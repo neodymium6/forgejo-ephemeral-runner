@@ -98,6 +98,20 @@ e2e_dispatch_workflow() {
     >/dev/null
 }
 
+e2e_lease_holder() {
+  e2e_kubectl get lease \
+    --namespace "${runner_namespace}" \
+    forgejo-ephemeral-runner-controller \
+    --output jsonpath='{.spec.holderIdentity}'
+}
+
+e2e_lease_holder_changed() {
+  local previous="$1"
+  local current
+  current="$(e2e_lease_holder)" || return
+  [[ -n "${current}" && "${current}" != "${previous}" ]]
+}
+
 e2e_resources_cleaned() {
   [[ "$(e2e_runner_pod_count)" == 0 ]] || return
   [[ "$(e2e_kubectl get secrets \
@@ -250,6 +264,28 @@ e2e_wait_for 'three successful Forgejo Actions runs' 240 e2e_successful_run_coun
 e2e_wait_for 'concurrent runner cleanup' 120 e2e_resources_cleaned
 
 printf '%s\n' 'E2E concurrency lifecycle succeeded.'
+
+printf '%s\n' 'Deleting the active controller to exercise leader failover.'
+previous_leader="$(e2e_lease_holder)"
+if [[ -z "${previous_leader}" ]]; then
+  e2e_die 'leader Lease has no holder before failover'
+  exit 1
+fi
+e2e_kubectl delete pod \
+  --namespace "${runner_namespace}" \
+  "${previous_leader}" \
+  --timeout 60s
+e2e_dispatch_workflow
+e2e_wait_for 'a different leader Lease holder' 60 e2e_lease_holder_changed "${previous_leader}"
+e2e_wait_for 'one runner Pod after leader failover' 120 e2e_runner_pod_present
+e2e_wait_for 'four successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 4
+e2e_wait_for 'post-failover runner cleanup' 120 e2e_resources_cleaned
+e2e_kubectl rollout status \
+  --namespace "${runner_namespace}" \
+  deployment/forgejo-ephemeral-runner-controller \
+  --timeout 120s
+
+printf '%s\n' 'E2E leader failover lifecycle succeeded.'
 e2e_completed=true
 e2e_stop_port_forward
 port_forward_pid=""
