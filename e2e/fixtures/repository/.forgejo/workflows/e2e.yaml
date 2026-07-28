@@ -12,6 +12,12 @@ jobs:
           set -eu
           test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
           test "${HOME}" = /home/runner
-          test "${PWD}" = /workspace/e2e-admin/e2e-repository
+          case "${PWD}" in
+            /workspace/*/hostexecutor) ;;
+            *)
+              printf 'unexpected work directory: %s\n' "${PWD}" >&2
+              exit 1
+              ;;
+          esac
           sleep 5
           printf '%s\n' 'ephemeral runner E2E succeeded'
