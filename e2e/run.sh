@@ -69,23 +69,41 @@ e2e_runner_pod_present() {
   [[ "$(e2e_runner_pod_count)" == 1 ]]
 }
 
-e2e_run_succeeded() {
+e2e_runner_pod_count_is() {
+  local expected="$1"
+  [[ "$(e2e_runner_pod_count)" == "${expected}" ]]
+}
+
+e2e_successful_run_count_at_least() {
+  local expected="$1"
   local response
-  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runs?limit=1")" || return
-  jq -e '
-    (.workflow_runs[0].status == "success") or
-    (
-      .workflow_runs[0].status == "completed" and
-      .workflow_runs[0].conclusion == "success"
-    )
-  ' <<<"${response}" >/dev/null
+  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runs?limit=10")" || return
+  local successful
+  successful="$(jq '
+    [
+      .workflow_runs[] |
+      select(
+        (.status == "success") or
+        (.status == "completed" and .conclusion == "success")
+      )
+    ] | length
+  ' <<<"${response}")" || return
+  ((successful >= expected))
+}
+
+e2e_dispatch_workflow() {
+  e2e_api "/api/v1/repos/${api_user}/${repository}/actions/workflows/e2e.yaml/dispatches" \
+    --request POST \
+    --data-binary '{"ref":"main"}' \
+    >/dev/null
 }
 
 e2e_resources_cleaned() {
   [[ "$(e2e_runner_pod_count)" == 0 ]] || return
-  ! e2e_kubectl get secret \
+  [[ "$(e2e_kubectl get secrets \
     --namespace "${runner_namespace}" \
-    forgejo-ephemeral-runner-credential-0 >/dev/null 2>&1 || return
+    --selector app.kubernetes.io/managed-by=forgejo-ephemeral-runner \
+    --output name | wc -l | tr -d '[:space:]')" == 0 ]] || return
 
   local response
   response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runners?visible=false")" ||
@@ -216,16 +234,22 @@ if [[ "$(e2e_runner_pod_count)" != 0 ]]; then
 fi
 
 printf '%s\n' 'Dispatching the smoke workflow.'
-e2e_api "/api/v1/repos/${api_user}/${repository}/actions/workflows/e2e.yaml/dispatches" \
-  --request POST \
-  --data-binary '{"ref":"main"}' \
-  >/dev/null
+e2e_dispatch_workflow
 
 e2e_wait_for 'one runner Pod' 120 e2e_runner_pod_present
-e2e_wait_for 'successful Forgejo Actions run' 180 e2e_run_succeeded
+e2e_wait_for 'one successful Forgejo Actions run' 180 e2e_successful_run_count_at_least 1
 e2e_wait_for 'runner Pod, credential, and registration cleanup' 120 e2e_resources_cleaned
 
 printf '%s\n' 'E2E smoke lifecycle succeeded.'
+
+printf '%s\n' 'Dispatching two concurrent workflows.'
+e2e_dispatch_workflow
+e2e_dispatch_workflow
+e2e_wait_for 'two concurrent runner Pods' 120 e2e_runner_pod_count_is 2
+e2e_wait_for 'three successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 3
+e2e_wait_for 'concurrent runner cleanup' 120 e2e_resources_cleaned
+
+printf '%s\n' 'E2E concurrency lifecycle succeeded.'
 e2e_completed=true
 e2e_stop_port_forward
 port_forward_pid=""

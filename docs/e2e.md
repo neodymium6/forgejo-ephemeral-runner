@@ -15,7 +15,10 @@ The cluster contains:
 The smoke scenario verifies that no runner Pod exists while the queue is empty,
 one targeted runner Pod appears after `workflow_dispatch`, the workflow
 succeeds without a Kubernetes service account token, and the runner Pod,
-credential Secret, and Forgejo registration are removed afterward.
+credential Secret, and Forgejo registration are removed afterward. A second
+scenario dispatches two workflows, verifies that two isolated runner Pods exist
+at the same time under `MAX_CONCURRENT=2`, and verifies complete cleanup after
+both workflows succeed.
 
 ## Requirements
 
