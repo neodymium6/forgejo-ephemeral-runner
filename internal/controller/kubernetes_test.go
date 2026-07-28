@@ -40,8 +40,8 @@ func TestBaseRunnerPodTemplate(t *testing.T) {
 		t.Fatal("rendered Pod contains an unresolved template expression")
 	}
 
-	var pod kubernetesPod
-	if err := json.Unmarshal(rendered.Bytes(), &pod); err != nil {
+	pod, err := decodeRunnerPodTemplate(rendered.Bytes())
+	if err != nil {
 		t.Fatalf("decode rendered Pod: %v", err)
 	}
 	if err := validateRunnerPodTemplate(pod, data); err != nil {

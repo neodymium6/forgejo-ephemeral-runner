@@ -1,18 +1,36 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"slices"
+	"strings"
 )
 
 const runnerServiceAccountName = "forgejo-runner-job"
+
+type runnerPodTemplate struct {
+	APIVersion string                    `json:"apiVersion"`
+	Kind       string                    `json:"kind"`
+	Metadata   runnerPodTemplateMetadata `json:"metadata"`
+	Spec       kubernetesPodSpec         `json:"spec"`
+}
+
+type runnerPodTemplateMetadata struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Labels    map[string]string `json:"labels"`
+}
 
 type kubernetesPodSpec struct {
 	AutomountServiceAccountToken *bool                        `json:"automountServiceAccountToken"`
 	ServiceAccountName           string                       `json:"serviceAccountName,omitempty"`
 	RestartPolicy                string                       `json:"restartPolicy"`
+	TerminationGracePeriod       *int64                       `json:"terminationGracePeriodSeconds,omitempty"`
 	HostNetwork                  bool                         `json:"hostNetwork,omitempty"`
 	HostPID                      bool                         `json:"hostPID,omitempty"`
 	HostIPC                      bool                         `json:"hostIPC,omitempty"`
@@ -25,7 +43,9 @@ type kubernetesPodSpec struct {
 }
 
 type kubernetesPodSecurityContext struct {
-	SeccompProfile *kubernetesSeccompProfile `json:"seccompProfile,omitempty"`
+	FSGroup             *int64                    `json:"fsGroup,omitempty"`
+	FSGroupChangePolicy string                    `json:"fsGroupChangePolicy,omitempty"`
+	SeccompProfile      *kubernetesSeccompProfile `json:"seccompProfile,omitempty"`
 }
 
 type kubernetesSeccompProfile struct {
@@ -35,8 +55,12 @@ type kubernetesSeccompProfile struct {
 type kubernetesContainer struct {
 	Name            string                              `json:"name"`
 	Image           string                              `json:"image"`
+	ImagePullPolicy string                              `json:"imagePullPolicy,omitempty"`
 	Command         []string                            `json:"command,omitempty"`
 	Args            []string                            `json:"args,omitempty"`
+	Env             []kubernetesEnvVar                  `json:"env,omitempty"`
+	EnvFrom         []kubernetesEnvFromSource           `json:"envFrom,omitempty"`
+	Resources       kubernetesResourceRequirements      `json:"resources,omitempty"`
 	SecurityContext *kubernetesContainerSecurityContext `json:"securityContext,omitempty"`
 	Ports           []kubernetesContainerPort           `json:"ports,omitempty"`
 	VolumeMounts    []kubernetesVolumeMount             `json:"volumeMounts,omitempty"`
@@ -47,6 +71,7 @@ type kubernetesContainerSecurityContext struct {
 	Capabilities             *kubernetesCapabilities `json:"capabilities,omitempty"`
 	Privileged               *bool                   `json:"privileged,omitempty"`
 	ProcMount                string                  `json:"procMount,omitempty"`
+	ReadOnlyRootFilesystem   *bool                   `json:"readOnlyRootFilesystem,omitempty"`
 	RunAsNonRoot             *bool                   `json:"runAsNonRoot,omitempty"`
 	RunAsUser                *int64                  `json:"runAsUser,omitempty"`
 }
@@ -60,6 +85,25 @@ type kubernetesContainerPort struct {
 	HostPort int32 `json:"hostPort,omitempty"`
 }
 
+type kubernetesEnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type kubernetesEnvFromSource struct {
+	Prefix       string                          `json:"prefix,omitempty"`
+	ConfigMapRef *kubernetesLocalObjectReference `json:"configMapRef,omitempty"`
+}
+
+type kubernetesLocalObjectReference struct {
+	Name string `json:"name"`
+}
+
+type kubernetesResourceRequirements struct {
+	Requests map[string]string `json:"requests,omitempty"`
+	Limits   map[string]string `json:"limits,omitempty"`
+}
+
 type kubernetesVolumeMount struct {
 	Name             string  `json:"name"`
 	MountPath        string  `json:"mountPath"`
@@ -71,7 +115,7 @@ type kubernetesVolume struct {
 	Name                  string                           `json:"name"`
 	ConfigMap             *kubernetesConfigMapVolumeSource `json:"configMap,omitempty"`
 	Secret                *kubernetesSecretVolumeSource    `json:"secret,omitempty"`
-	EmptyDir              json.RawMessage                  `json:"emptyDir,omitempty"`
+	EmptyDir              *kubernetesEmptyDirVolumeSource  `json:"emptyDir,omitempty"`
 	HostPath              json.RawMessage                  `json:"hostPath,omitempty"`
 	Projected             json.RawMessage                  `json:"projected,omitempty"`
 	PersistentVolumeClaim json.RawMessage                  `json:"persistentVolumeClaim,omitempty"`
@@ -87,15 +131,42 @@ type kubernetesSecretVolumeSource struct {
 	DefaultMode *int32 `json:"defaultMode,omitempty"`
 }
 
-func validateRunnerPodTemplate(pod kubernetesPod, data runnerPodTemplateData) error {
+type kubernetesEmptyDirVolumeSource struct {
+	SizeLimit string `json:"sizeLimit"`
+}
+
+func decodeRunnerPodTemplate(data []byte) (runnerPodTemplate, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var pod runnerPodTemplate
+	if err := decoder.Decode(&pod); err != nil {
+		return runnerPodTemplate{}, fmt.Errorf("strictly decode runner Pod template: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return runnerPodTemplate{}, errors.New("runner Pod template contains trailing JSON data")
+		}
+		return runnerPodTemplate{}, fmt.Errorf("decode trailing runner Pod template data: %w", err)
+	}
+	return pod, nil
+}
+
+func validateRunnerPodTemplate(pod runnerPodTemplate, data runnerPodTemplateData) error {
 	if pod.APIVersion != "v1" || pod.Kind != "Pod" {
 		return errors.New("runner Pod template must define a v1 Pod")
 	}
 	if pod.Metadata.Name != data.PodName || pod.Metadata.Namespace != data.Namespace {
 		return errors.New("runner Pod template metadata does not match controller configuration")
 	}
-	if pod.Metadata.Labels[managedByLabel] != managedByValue || pod.Metadata.Labels[slotLabel] != fmt.Sprintf("%d", data.Slot) {
-		return errors.New("runner Pod template does not contain the expected ownership labels")
+	expectedLabels := map[string]string{
+		"app.kubernetes.io/name":      "forgejo-ephemeral-runner",
+		"app.kubernetes.io/component": "job",
+		managedByLabel:                managedByValue,
+		slotLabel:                     fmt.Sprintf("%d", data.Slot),
+	}
+	if !maps.Equal(pod.Metadata.Labels, expectedLabels) {
+		return errors.New("runner Pod template must contain exactly the reviewed labels")
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		return errors.New("runner Pod template must set automountServiceAccountToken to false")
@@ -106,10 +177,17 @@ func validateRunnerPodTemplate(pod kubernetesPod, data runnerPodTemplateData) er
 	if pod.Spec.RestartPolicy != "Never" {
 		return errors.New("runner Pod template must set restartPolicy to Never")
 	}
+	if pod.Spec.TerminationGracePeriod == nil || *pod.Spec.TerminationGracePeriod != 30 {
+		return errors.New("runner Pod template must use the reviewed 30-second termination grace period")
+	}
 	if pod.Spec.HostNetwork || pod.Spec.HostPID || pod.Spec.HostIPC || booleanValue(pod.Spec.ShareProcessNamespace) {
 		return errors.New("runner Pod template must not share host network, PID, IPC, or process namespaces")
 	}
-	if pod.Spec.SecurityContext.SeccompProfile == nil || pod.Spec.SecurityContext.SeccompProfile.Type != "RuntimeDefault" {
+	podSecurity := pod.Spec.SecurityContext
+	if podSecurity.FSGroup == nil || *podSecurity.FSGroup != 65532 || podSecurity.FSGroupChangePolicy != "OnRootMismatch" {
+		return errors.New("runner Pod template must use the reviewed filesystem group")
+	}
+	if podSecurity.SeccompProfile == nil || podSecurity.SeccompProfile.Type != "RuntimeDefault" {
 		return errors.New("runner Pod template must use the RuntimeDefault seccomp profile")
 	}
 	if len(pod.Spec.InitContainers) != 0 || len(pod.Spec.EphemeralContainers) != 0 || len(pod.Spec.Containers) != 1 {
@@ -125,8 +203,28 @@ func validateRunnerContainer(container kubernetesContainer, runnerImage string) 
 	if container.Name != "runner" || container.Image != runnerImage {
 		return errors.New("runner Pod template must contain only the configured runner image")
 	}
+	if container.ImagePullPolicy != "IfNotPresent" {
+		return errors.New("runner container must use the reviewed image pull policy")
+	}
 	if !slices.Equal(container.Command, []string{"/bin/forgejo-ephemeral-one-job"}) || len(container.Args) != 0 {
 		return errors.New("runner Pod template must invoke only the one-job launcher")
+	}
+	wantEnvFrom := []kubernetesEnvFromSource{{ConfigMapRef: &kubernetesLocalObjectReference{Name: "forgejo-runner-settings"}}}
+	if !slices.EqualFunc(container.EnvFrom, wantEnvFrom, func(left, right kubernetesEnvFromSource) bool {
+		return left.Prefix == right.Prefix && left.ConfigMapRef != nil && right.ConfigMapRef != nil && left.ConfigMapRef.Name == right.ConfigMapRef.Name
+	}) {
+		return errors.New("runner container must import only the reviewed settings ConfigMap")
+	}
+	wantEnv := []kubernetesEnvVar{
+		{Name: "HOME", Value: "/home/runner"},
+		{Name: "TMPDIR", Value: "/tmp"},
+		{Name: "NIX_CONFIG", Value: "experimental-features = nix-command flakes\nsandbox = false\n"},
+	}
+	if !slices.Equal(container.Env, wantEnv) {
+		return errors.New("runner container must use only the reviewed literal environment variables")
+	}
+	if err := validateResourceRequirements(container.Resources); err != nil {
+		return err
 	}
 	security := container.SecurityContext
 	if security == nil || booleanValue(security.Privileged) {
@@ -134,6 +232,9 @@ func validateRunnerContainer(container kubernetesContainer, runnerImage string) 
 	}
 	if security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation {
 		return errors.New("runner container must disable privilege escalation")
+	}
+	if security.ReadOnlyRootFilesystem == nil || *security.ReadOnlyRootFilesystem {
+		return errors.New("runner container must use the reviewed writable image layer")
 	}
 	if security.Capabilities == nil || len(security.Capabilities.Add) != 0 || !slices.Equal(security.Capabilities.Drop, []string{"ALL"}) {
 		return errors.New("runner container must add no capabilities and drop ALL")
@@ -144,10 +245,8 @@ func validateRunnerContainer(container kubernetesContainer, runnerImage string) 
 	if security.RunAsUser == nil || *security.RunAsUser != 0 || security.RunAsNonRoot == nil || *security.RunAsNonRoot {
 		return errors.New("runner container must use the reviewed root-in-container execution model")
 	}
-	for _, port := range container.Ports {
-		if port.HostPort != 0 {
-			return errors.New("runner container must not request host ports")
-		}
+	if len(container.Ports) != 0 {
+		return errors.New("runner container must not expose container or host ports")
 	}
 
 	expectedMounts := map[string]kubernetesVolumeMount{
@@ -176,6 +275,25 @@ func validateRunnerContainer(container kubernetesContainer, runnerImage string) 
 	return nil
 }
 
+func validateResourceRequirements(resources kubernetesResourceRequirements) error {
+	wantKeys := map[string]struct{}{
+		"cpu":               {},
+		"memory":            {},
+		"ephemeral-storage": {},
+	}
+	for name, values := range map[string]map[string]string{"requests": resources.Requests, "limits": resources.Limits} {
+		if len(values) != len(wantKeys) {
+			return fmt.Errorf("runner container resources must set only cpu, memory, and ephemeral-storage %s", name)
+		}
+		for key := range wantKeys {
+			if strings.TrimSpace(values[key]) == "" {
+				return fmt.Errorf("runner container resource %s.%s must be set", name, key)
+			}
+		}
+	}
+	return nil
+}
+
 func validateRunnerVolumes(volumes []kubernetesVolume, credentialName string) error {
 	if len(volumes) != 5 {
 		return errors.New("runner Pod template must use only the five reviewed volumes")
@@ -191,15 +309,15 @@ func validateRunnerVolumes(volumes []kubernetesVolume, credentialName string) er
 		}
 		switch volume.Name {
 		case "runner-config":
-			if volume.ConfigMap == nil || volume.ConfigMap.Name != "forgejo-runner-config" {
+			if volume.ConfigMap == nil || volume.ConfigMap.Name != "forgejo-runner-config" || volume.Secret != nil || volume.EmptyDir != nil {
 				return errors.New("runner-config must use the reviewed ConfigMap")
 			}
 		case "runner-credential":
-			if volume.Secret == nil || volume.Secret.SecretName != credentialName || volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o400 {
+			if volume.Secret == nil || volume.Secret.SecretName != credentialName || volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o400 || volume.ConfigMap != nil || volume.EmptyDir != nil {
 				return errors.New("runner-credential must use only the slot credential with mode 0400")
 			}
 		case "workspace", "home", "tmp":
-			if len(volume.EmptyDir) == 0 {
+			if volume.EmptyDir == nil || strings.TrimSpace(volume.EmptyDir.SizeLimit) == "" || volume.ConfigMap != nil || volume.Secret != nil {
 				return fmt.Errorf("runner Pod template volume %q must use emptyDir", volume.Name)
 			}
 		default:

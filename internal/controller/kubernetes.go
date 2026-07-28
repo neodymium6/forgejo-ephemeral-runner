@@ -239,9 +239,9 @@ func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	if err := c.podTemplate.Execute(&rendered, templateData); err != nil {
 		return fmt.Errorf("render runner Pod template: %w", err)
 	}
-	var pod kubernetesPod
-	if err := json.Unmarshal(rendered.Bytes(), &pod); err != nil {
-		return fmt.Errorf("decode rendered runner Pod template: %w", err)
+	pod, err := decodeRunnerPodTemplate(rendered.Bytes())
+	if err != nil {
+		return err
 	}
 	if err := validateRunnerPodTemplate(pod, templateData); err != nil {
 		return err
