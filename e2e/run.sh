@@ -199,7 +199,7 @@ e2e_kubectl apply --filename "${e2e_repository_root}/deploy/base/namespace.yaml"
 e2e_kubectl create secret generic forgejo-runner-controller \
   --namespace "${runner_namespace}" \
   --from-file "api-token=${e2e_token_file}" \
-  --dry-run client \
+  --dry-run=client \
   --output yaml | e2e_kubectl apply --filename -
 e2e_kubectl apply --kustomize "${script_dir}/manifests/controller"
 e2e_kubectl rollout status \
