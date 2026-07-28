@@ -22,7 +22,9 @@ containing the ephemeral runner UUID, one-job token, and opaque job handle.
 Only that Secret is mounted into its runner Pod. A workflow can read the
 credential because Forgejo Runner requires it, but Forgejo marks the runner
 ephemeral and `one-job --handle` targets one job attempt. The controller deletes
-the Secret during cleanup.
+the Secret during cleanup. Before deleting the recorded Forgejo runner, it
+verifies that the ID still belongs to the deterministic slot name and matches
+the managed description and ephemeral flag; a mismatch fails closed.
 
 The API token remains a high-value credential. Use a dedicated Forgejo account,
 select the narrowest runner scope, and grant the narrowest route-level token
@@ -54,11 +56,13 @@ runner Pod and credential Secret names. It can also create a Lease in that
 namespace and can `get` and `update` only the fixed leader-election Lease.
 
 The controller cannot list Pods, Secrets, or Leases, read unrelated Secret
-data, or access another namespace. The namespace should contain no unrelated
-workloads or Secrets. Kubernetes RBAC cannot restrict `create` to an exact
-object name, so a compromised controller can create additional Pods, Secrets,
-or Leases inside its namespace. A dedicated namespace contains that residual
-capability.
+data, or access another namespace. It validates the managed-by and slot labels
+plus the API-assigned UID on every fixed-name Pod and Secret, and includes that
+UID as a deletion precondition so a same-name replacement is not removed. The
+namespace should contain no unrelated workloads or Secrets. Kubernetes RBAC
+cannot restrict `create` to an exact object name, so a compromised controller
+can create additional Pods, Secrets, or Leases inside its namespace. A dedicated
+namespace contains that residual capability.
 
 The runner service account has no RBAC binding, and its token is not
 automounted. The runner Pod receives no projected Kubernetes token.

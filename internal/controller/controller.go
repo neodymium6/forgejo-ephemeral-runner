@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-const managedDescription = "Managed by forgejo-ephemeral-runner"
+const (
+	managedDescription = "Managed by forgejo-ephemeral-runner"
+	managedByLabel     = "app.kubernetes.io/managed-by"
+	managedByValue     = "forgejo-ephemeral-runner"
+	slotLabel          = "forgejo-ephemeral-runner.dev/slot"
+)
 
 type Registration struct {
 	ID    int64  `json:"id"`
@@ -33,12 +38,14 @@ type RemoteJob struct {
 
 type PodState struct {
 	Exists   bool
+	UID      string
 	Deleting bool
 	Phase    string
 }
 
 type CredentialState struct {
 	Exists    bool
+	UID       string
 	RunnerID  int64
 	JobHandle string
 }
@@ -53,10 +60,10 @@ type Forgejo interface {
 type Kubernetes interface {
 	GetPod(context.Context, int) (PodState, error)
 	CreatePod(context.Context, int) error
-	DeletePod(context.Context, int) error
+	DeletePod(context.Context, int, string) error
 	GetCredential(context.Context, int) (CredentialState, error)
-	CreateCredential(context.Context, int, Registration, string) error
-	DeleteCredential(context.Context, int) error
+	CreateCredential(context.Context, int, Registration, string) (string, error)
+	DeleteCredential(context.Context, int, string) error
 }
 
 func Run(
@@ -122,7 +129,7 @@ func Reconcile(
 		if pod.Exists {
 			if !credential.Exists {
 				logger.Printf("deleting orphan runner pod in slot %d", slot)
-				return kubernetes.DeletePod(ctx, slot)
+				return kubernetes.DeletePod(ctx, slot, pod.UID)
 			}
 			if pod.Deleting {
 				activeCount++
@@ -133,7 +140,7 @@ func Reconcile(
 			switch pod.Phase {
 			case "Succeeded", "Failed":
 				logger.Printf("deleting terminal runner pod in slot %d with phase %s", slot, pod.Phase)
-				return kubernetes.DeletePod(ctx, slot)
+				return kubernetes.DeletePod(ctx, slot, pod.UID)
 			default:
 				activeCount++
 				activeHandles[credential.JobHandle] = struct{}{}
@@ -143,12 +150,22 @@ func Reconcile(
 		}
 
 		if credential.Exists {
-			logger.Printf("removing Forgejo runner registration %d from slot %d", credential.RunnerID, slot)
-			if err := forgejo.DeleteRunner(ctx, credential.RunnerID); err != nil {
-				return fmt.Errorf("delete Forgejo runner %d: %w", credential.RunnerID, err)
+			remoteRunners, err := forgejo.ListRunners(ctx)
+			if err != nil {
+				return fmt.Errorf("list Forgejo runners before credential cleanup: %w", err)
+			}
+			present, err := validateManagedRunnerByID(remoteRunners, credential.RunnerID, runnerNameForSlot(cfg, slot))
+			if err != nil {
+				return err
+			}
+			if present {
+				logger.Printf("removing Forgejo runner registration %d from slot %d", credential.RunnerID, slot)
+				if err := forgejo.DeleteRunner(ctx, credential.RunnerID); err != nil {
+					return fmt.Errorf("delete Forgejo runner %d: %w", credential.RunnerID, err)
+				}
 			}
 			logger.Printf("deleting consumed runner credential in slot %d", slot)
-			return kubernetes.DeleteCredential(ctx, slot)
+			return kubernetes.DeleteCredential(ctx, slot, credential.UID)
 		}
 	}
 
@@ -230,12 +247,13 @@ func Reconcile(
 		}
 		logger.Printf("created ephemeral Forgejo runner registration %d for slot %d", registration.ID, slot)
 
-		if err := kubernetes.CreateCredential(ctx, slot, registration, job.Handle); err != nil {
+		credentialUID, err := kubernetes.CreateCredential(ctx, slot, registration, job.Handle)
+		if err != nil {
 			cleanupErr := forgejo.DeleteRunner(ctx, registration.ID)
 			return errors.Join(fmt.Errorf("create runner credential for slot %d: %w", slot, err), cleanupErr)
 		}
 		if err := kubernetes.CreatePod(ctx, slot); err != nil {
-			credentialErr := kubernetes.DeleteCredential(ctx, slot)
+			credentialErr := kubernetes.DeleteCredential(ctx, slot, credentialUID)
 			registrationErr := forgejo.DeleteRunner(ctx, registration.ID)
 			return errors.Join(fmt.Errorf("create runner pod for slot %d: %w", slot, err), credentialErr, registrationErr)
 		}
@@ -243,6 +261,19 @@ func Reconcile(
 		activeCount++
 	}
 	return nil
+}
+
+func validateManagedRunnerByID(runners []RemoteRunner, id int64, expectedName string) (bool, error) {
+	for _, runner := range runners {
+		if runner.ID != id {
+			continue
+		}
+		if runner.Name != expectedName || runner.Description != managedDescription || !runner.Ephemeral {
+			return false, fmt.Errorf("Forgejo runner %d does not match managed slot %q", id, expectedName)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func runnerNameForSlot(cfg Config, slot int) string {

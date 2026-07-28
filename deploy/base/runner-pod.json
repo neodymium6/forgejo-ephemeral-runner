@@ -7,7 +7,8 @@
     "labels": {
       "app.kubernetes.io/name": "forgejo-ephemeral-runner",
       "app.kubernetes.io/component": "job",
-      "app.kubernetes.io/managed-by": "forgejo-ephemeral-runner"
+      "app.kubernetes.io/managed-by": "forgejo-ephemeral-runner",
+      "forgejo-ephemeral-runner.dev/slot": "{{ .Slot }}"
     }
   },
   "spec": {

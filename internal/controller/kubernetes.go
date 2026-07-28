@@ -38,18 +38,24 @@ type fileTokenRoundTripper struct {
 
 type runnerPodTemplateData struct {
 	Namespace            string
+	Slot                 int
 	PodName              string
 	CredentialSecretName string
 	RunnerImage          string
 }
 
+type kubernetesObjectMeta struct {
+	Name              string            `json:"name,omitempty"`
+	Namespace         string            `json:"namespace,omitempty"`
+	UID               string            `json:"uid,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	Annotations       map[string]string `json:"annotations,omitempty"`
+	DeletionTimestamp *string           `json:"deletionTimestamp,omitempty"`
+}
+
 type kubernetesPod struct {
-	Metadata struct {
-		Name              string  `json:"name"`
-		Namespace         string  `json:"namespace"`
-		DeletionTimestamp *string `json:"deletionTimestamp"`
-	} `json:"metadata"`
-	Spec struct {
+	Metadata kubernetesObjectMeta `json:"metadata"`
+	Spec     struct {
 		AutomountServiceAccountToken *bool  `json:"automountServiceAccountToken"`
 		RestartPolicy                string `json:"restartPolicy"`
 	} `json:"spec"`
@@ -59,17 +65,12 @@ type kubernetesPod struct {
 }
 
 type kubernetesSecret struct {
-	APIVersion string `json:"apiVersion,omitempty"`
-	Kind       string `json:"kind,omitempty"`
-	Metadata   struct {
-		Name        string            `json:"name,omitempty"`
-		Namespace   string            `json:"namespace,omitempty"`
-		Labels      map[string]string `json:"labels,omitempty"`
-		Annotations map[string]string `json:"annotations,omitempty"`
-	} `json:"metadata"`
-	Immutable bool              `json:"immutable,omitempty"`
-	Type      string            `json:"type,omitempty"`
-	Data      map[string][]byte `json:"data,omitempty"`
+	APIVersion string               `json:"apiVersion,omitempty"`
+	Kind       string               `json:"kind,omitempty"`
+	Metadata   kubernetesObjectMeta `json:"metadata"`
+	Immutable  bool                 `json:"immutable,omitempty"`
+	Type       string               `json:"type,omitempty"`
+	Data       map[string][]byte    `json:"data,omitempty"`
 }
 
 func NewKubernetesClient(cfg Config) (*KubernetesClient, error) {
@@ -164,6 +165,7 @@ func (c *KubernetesClient) slotResources(slot int) (runnerPodTemplateData, strin
 	credentialName := resourceNameForSlot(c.credentialName, slot)
 	return runnerPodTemplateData{
 		Namespace:            c.namespace,
+		Slot:                 slot,
 		PodName:              podName,
 		CredentialSecretName: credentialName,
 		RunnerImage:          c.runnerImage,
@@ -174,8 +176,21 @@ func resourceNameForSlot(base string, slot int) string {
 	return fmt.Sprintf("%s-%d", base, slot)
 }
 
+func validateManagedMetadata(kind string, metadata kubernetesObjectMeta, expectedName, expectedNamespace string, slot int) error {
+	if metadata.Name != expectedName || metadata.Namespace != expectedNamespace {
+		return fmt.Errorf("managed %s metadata does not match slot %d", kind, slot)
+	}
+	if strings.TrimSpace(metadata.UID) == "" {
+		return fmt.Errorf("managed %s in slot %d has no UID", kind, slot)
+	}
+	if metadata.Labels[managedByLabel] != managedByValue || metadata.Labels[slotLabel] != strconv.Itoa(slot) {
+		return fmt.Errorf("%s in slot %d does not have the expected ownership labels", kind, slot)
+	}
+	return nil
+}
+
 func (c *KubernetesClient) GetPod(ctx context.Context, slot int) (PodState, error) {
-	_, podURL, _, err := c.slotResources(slot)
+	templateData, podURL, _, err := c.slotResources(slot)
 	if err != nil {
 		return PodState{}, err
 	}
@@ -200,8 +215,12 @@ func (c *KubernetesClient) GetPod(ctx context.Context, slot int) (PodState, erro
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&pod); err != nil {
 		return PodState{}, fmt.Errorf("decode pod: %w", err)
 	}
+	if err := validateManagedMetadata("runner Pod", pod.Metadata, templateData.PodName, templateData.Namespace, slot); err != nil {
+		return PodState{}, err
+	}
 	return PodState{
 		Exists:   true,
+		UID:      pod.Metadata.UID,
 		Deleting: pod.Metadata.DeletionTimestamp != nil,
 		Phase:    pod.Status.Phase,
 	}, nil
@@ -222,6 +241,9 @@ func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	}
 	if pod.Metadata.Name != templateData.PodName || pod.Metadata.Namespace != templateData.Namespace {
 		return errors.New("runner Pod template metadata does not match controller configuration")
+	}
+	if pod.Metadata.Labels[managedByLabel] != managedByValue || pod.Metadata.Labels[slotLabel] != strconv.Itoa(slot) {
+		return errors.New("runner Pod template does not contain the expected ownership labels")
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
 		return errors.New("runner Pod template must set automountServiceAccountToken to false")
@@ -247,16 +269,16 @@ func (c *KubernetesClient) CreatePod(ctx context.Context, slot int) error {
 	return nil
 }
 
-func (c *KubernetesClient) DeletePod(ctx context.Context, slot int) error {
+func (c *KubernetesClient) DeletePod(ctx context.Context, slot int, uid string) error {
 	_, podURL, _, err := c.slotResources(slot)
 	if err != nil {
 		return err
 	}
-	return c.delete(ctx, podURL, "delete pod")
+	return c.delete(ctx, podURL, "delete pod", uid)
 }
 
 func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (CredentialState, error) {
-	_, _, credentialURL, err := c.slotResources(slot)
+	templateData, _, credentialURL, err := c.slotResources(slot)
 	if err != nil {
 		return CredentialState{}, err
 	}
@@ -281,6 +303,12 @@ func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (Credent
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&secret); err != nil {
 		return CredentialState{}, fmt.Errorf("decode credential: %w", err)
 	}
+	if err := validateManagedMetadata("runner credential", secret.Metadata, templateData.CredentialSecretName, templateData.Namespace, slot); err != nil {
+		return CredentialState{}, err
+	}
+	if !secret.Immutable || secret.Type != "Opaque" {
+		return CredentialState{}, errors.New("runner credential does not have the expected immutable Opaque type")
+	}
 	runnerID, err := parseRunnerID(secret.Metadata.Annotations[runnerIDAnnotation])
 	if err != nil {
 		return CredentialState{}, err
@@ -289,16 +317,16 @@ func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (Credent
 	if strings.TrimSpace(jobHandle) == "" {
 		return CredentialState{}, errors.New("runner credential has an empty job handle")
 	}
-	return CredentialState{Exists: true, RunnerID: runnerID, JobHandle: jobHandle}, nil
+	return CredentialState{Exists: true, UID: secret.Metadata.UID, RunnerID: runnerID, JobHandle: jobHandle}, nil
 }
 
-func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) error {
+func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) (string, error) {
 	templateData, _, _, err := c.slotResources(slot)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if strings.TrimSpace(jobHandle) == "" {
-		return errors.New("job handle is empty")
+		return "", errors.New("job handle is empty")
 	}
 	secret := kubernetesSecret{
 		APIVersion: "v1",
@@ -313,41 +341,62 @@ func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, regis
 	}
 	secret.Metadata.Name = templateData.CredentialSecretName
 	secret.Metadata.Namespace = templateData.Namespace
-	secret.Metadata.Labels = map[string]string{"app.kubernetes.io/managed-by": "forgejo-ephemeral-runner"}
+	secret.Metadata.Labels = map[string]string{
+		managedByLabel: managedByValue,
+		slotLabel:      strconv.Itoa(slot),
+	}
 	secret.Metadata.Annotations = map[string]string{runnerIDAnnotation: fmt.Sprintf("%d", registration.ID)}
 	body, err := json.Marshal(secret)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.secretsURL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.authorize(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("create credential: %w", err)
+		return "", fmt.Errorf("create credential: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		return kubernetesResponseError("create credential", resp)
+		return "", kubernetesResponseError("create credential", resp)
 	}
-	return nil
+	var created kubernetesSecret
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&created); err != nil {
+		return "", fmt.Errorf("decode created credential: %w", err)
+	}
+	if err := validateManagedMetadata("created runner credential", created.Metadata, templateData.CredentialSecretName, templateData.Namespace, slot); err != nil {
+		return "", err
+	}
+	return created.Metadata.UID, nil
 }
 
-func (c *KubernetesClient) DeleteCredential(ctx context.Context, slot int) error {
+func (c *KubernetesClient) DeleteCredential(ctx context.Context, slot int, uid string) error {
 	_, _, credentialURL, err := c.slotResources(slot)
 	if err != nil {
 		return err
 	}
-	return c.delete(ctx, credentialURL, "delete credential")
+	return c.delete(ctx, credentialURL, "delete credential", uid)
 }
 
-func (c *KubernetesClient) delete(ctx context.Context, target, operation string) error {
-	body := strings.NewReader(`{"apiVersion":"v1","kind":"DeleteOptions","gracePeriodSeconds":5}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, body)
+func (c *KubernetesClient) delete(ctx context.Context, target, operation, uid string) error {
+	if strings.TrimSpace(uid) == "" {
+		return fmt.Errorf("%s requires a Kubernetes UID precondition", operation)
+	}
+	body, err := json.Marshal(map[string]any{
+		"apiVersion":         "v1",
+		"kind":               "DeleteOptions",
+		"gracePeriodSeconds": 5,
+		"preconditions":      map[string]string{"uid": uid},
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

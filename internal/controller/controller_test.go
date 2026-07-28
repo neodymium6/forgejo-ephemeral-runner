@@ -46,8 +46,10 @@ type fakeKubernetes struct {
 	credential            CredentialState
 	createPodCalls        int
 	deletePodCalls        int
+	deletePodUIDs         []string
 	createCredentialCalls int
 	deleteCredentialCalls int
+	deleteCredentialUIDs  []string
 	createPodErr          error
 	createCredentialErr   error
 	credentialHandles     []string
@@ -62,8 +64,9 @@ func (f *fakeKubernetes) CreatePod(context.Context, int) error {
 	return f.createPodErr
 }
 
-func (f *fakeKubernetes) DeletePod(context.Context, int) error {
+func (f *fakeKubernetes) DeletePod(_ context.Context, _ int, uid string) error {
 	f.deletePodCalls++
+	f.deletePodUIDs = append(f.deletePodUIDs, uid)
 	return nil
 }
 
@@ -71,14 +74,18 @@ func (f *fakeKubernetes) GetCredential(context.Context, int) (CredentialState, e
 	return f.credential, nil
 }
 
-func (f *fakeKubernetes) CreateCredential(_ context.Context, _ int, _ Registration, handle string) error {
+func (f *fakeKubernetes) CreateCredential(_ context.Context, _ int, _ Registration, handle string) (string, error) {
 	f.createCredentialCalls++
 	f.credentialHandles = append(f.credentialHandles, handle)
-	return f.createCredentialErr
+	if f.createCredentialErr != nil {
+		return "", f.createCredentialErr
+	}
+	return "created-credential-uid", nil
 }
 
-func (f *fakeKubernetes) DeleteCredential(context.Context, int) error {
+func (f *fakeKubernetes) DeleteCredential(_ context.Context, _ int, uid string) error {
 	f.deleteCredentialCalls++
+	f.deleteCredentialUIDs = append(f.deleteCredentialUIDs, uid)
 	return nil
 }
 
@@ -119,8 +126,8 @@ func TestReconcileCreatesFreshRunner(t *testing.T) {
 func TestReconcileDeletesTerminalPod(t *testing.T) {
 	forgejo := &fakeForgejo{}
 	kubernetes := &fakeKubernetes{
-		pod:        PodState{Exists: true, Phase: "Succeeded"},
-		credential: CredentialState{Exists: true, RunnerID: 42},
+		pod:        PodState{Exists: true, UID: "pod-uid", Phase: "Succeeded"},
+		credential: CredentialState{Exists: true, UID: "credential-uid", RunnerID: 42},
 	}
 
 	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
@@ -129,14 +136,22 @@ func TestReconcileDeletesTerminalPod(t *testing.T) {
 	if kubernetes.deletePodCalls != 1 {
 		t.Fatalf("DeletePod calls = %d, want 1", kubernetes.deletePodCalls)
 	}
+	if !reflect.DeepEqual(kubernetes.deletePodUIDs, []string{"pod-uid"}) {
+		t.Fatalf("deleted Pod UIDs = %v", kubernetes.deletePodUIDs)
+	}
 	if len(forgejo.deleted) != 0 {
 		t.Fatalf("Forgejo runner deleted before Pod disappeared: %v", forgejo.deleted)
 	}
 }
 
 func TestReconcileCleansCredentialAfterPodDisappears(t *testing.T) {
-	forgejo := &fakeForgejo{}
-	kubernetes := &fakeKubernetes{credential: CredentialState{Exists: true, RunnerID: 42}}
+	forgejo := &fakeForgejo{runners: []RemoteRunner{{
+		ID:          42,
+		Name:        "ephemeral-slot-0-0",
+		Description: managedDescription,
+		Ephemeral:   true,
+	}}}
+	kubernetes := &fakeKubernetes{credential: CredentialState{Exists: true, UID: "credential-uid", RunnerID: 42}}
 
 	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
@@ -146,6 +161,45 @@ func TestReconcileCleansCredentialAfterPodDisappears(t *testing.T) {
 	}
 	if kubernetes.deleteCredentialCalls != 1 {
 		t.Fatalf("DeleteCredential calls = %d, want 1", kubernetes.deleteCredentialCalls)
+	}
+	if !reflect.DeepEqual(kubernetes.deleteCredentialUIDs, []string{"credential-uid"}) {
+		t.Fatalf("deleted credential UIDs = %v", kubernetes.deleteCredentialUIDs)
+	}
+}
+
+func TestReconcileRefusesCredentialPointingToUnmanagedRunner(t *testing.T) {
+	forgejo := &fakeForgejo{runners: []RemoteRunner{{
+		ID:          42,
+		Name:        "another-runner",
+		Description: managedDescription,
+		Ephemeral:   true,
+	}}}
+	kubernetes := &fakeKubernetes{credential: CredentialState{
+		Exists: true, UID: "credential-uid", RunnerID: 42,
+	}}
+
+	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err == nil {
+		t.Fatal("Reconcile() accepted a credential pointing to an unmanaged runner")
+	}
+	if len(forgejo.deleted) != 0 || kubernetes.deleteCredentialCalls != 0 {
+		t.Fatalf("unsafe cleanup occurred: runners=%v credentials=%d", forgejo.deleted, kubernetes.deleteCredentialCalls)
+	}
+}
+
+func TestReconcileDeletesCredentialWhenManagedRunnerIsAlreadyAbsent(t *testing.T) {
+	forgejo := &fakeForgejo{}
+	kubernetes := &fakeKubernetes{credential: CredentialState{
+		Exists: true, UID: "credential-uid", RunnerID: 42,
+	}}
+
+	if err := Reconcile(context.Background(), testConfig(), forgejo, kubernetes, testLogger()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if len(forgejo.deleted) != 0 {
+		t.Fatalf("DeleteRunner called for an absent runner: %v", forgejo.deleted)
+	}
+	if !reflect.DeepEqual(kubernetes.deleteCredentialUIDs, []string{"credential-uid"}) {
+		t.Fatalf("deleted credential UIDs = %v", kubernetes.deleteCredentialUIDs)
 	}
 }
 
