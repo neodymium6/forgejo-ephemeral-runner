@@ -29,8 +29,12 @@ Use a Linux or macOS development host with a working Docker or Podman service.
 The Nix development shell supplies Kind, kubectl, curl, jq, and the remaining
 test tools. Approximately 4 GiB of memory is recommended. At least 10 GiB of free disk
 space is required, and the preflight check rejects hosts below that threshold.
-The first Forgejo image pull may take several minutes on a slow connection;
-the harness allows up to 15 minutes for the initial rollout.
+The first Forgejo image pull may take several minutes on a slow connection.
+The harness downloads the exact pinned source digest, stores it as a checksummed
+OCI archive under the ignored `.cache/e2e/` directory, and loads it into each
+disposable Kind cluster before deployment. Test data, credentials, and cluster
+state are still removed after each successful run; only the public Forgejo
+image layers persist.
 
 Check prerequisites without creating a cluster:
 
@@ -50,6 +54,13 @@ failed run retains the cluster for inspection and prints the cleanup command:
 
 ```sh
 just e2e-clean
+```
+
+`just e2e-clean` keeps the image cache. Remove that cache explicitly when disk
+space is needed or when diagnosing image acquisition:
+
+```sh
+just e2e-cache-clean
 ```
 
 Set `E2E_KEEP_CLUSTER=true` to retain a successful cluster. Set

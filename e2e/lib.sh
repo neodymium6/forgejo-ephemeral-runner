@@ -3,11 +3,17 @@
 e2e_repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 e2e_cluster_name="forgejo-ephemeral-runner-e2e"
 e2e_state_dir="${e2e_repository_root}/.e2e"
+e2e_cache_dir="${E2E_CACHE_DIR:-${e2e_repository_root}/.cache/e2e}"
 e2e_kubeconfig="${e2e_state_dir}/kubeconfig"
 e2e_provider_file="${e2e_state_dir}/provider"
 e2e_podman_home="${e2e_state_dir}/podman-home"
 e2e_podman_policy="${e2e_podman_home}/.config/containers/policy.json"
 e2e_minimum_free_kib=$((10 * 1024 * 1024))
+e2e_forgejo_source_image="codeberg.org/forgejo/forgejo@sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c"
+e2e_forgejo_source_digest="${e2e_forgejo_source_image##*@}"
+e2e_forgejo_local_image="docker.io/library/forgejo-e2e:15.0.5"
+e2e_forgejo_archive="${e2e_cache_dir}/forgejo-${e2e_forgejo_source_digest#sha256:}.tar"
+e2e_forgejo_archive_checksum="${e2e_forgejo_archive}.sha256"
 
 e2e_die() {
   printf 'error: %s\n' "$*" >&2
@@ -81,6 +87,83 @@ e2e_prepare_podman_home() {
     '{' \
     '  "default": [{"type": "insecureAcceptAnything"}]' \
     '}' >"${e2e_podman_policy}"
+}
+
+e2e_archive_checksum() {
+  sha256sum "$1" | awk '{ print $1 }'
+}
+
+e2e_archive_reference() {
+  tar -xOf "$1" index.json |
+    jq -er \
+      'select((.manifests | length) == 1) | .manifests[0].annotations["org.opencontainers.image.ref.name"]'
+}
+
+e2e_prepare_forgejo_cache() {
+  local actual_checksum archive_reference expected_checksum partial_archive partial_checksum
+  mkdir -p "${e2e_cache_dir}"
+
+  if [[ -f "${e2e_forgejo_archive}" ]]; then
+    [[ -f "${e2e_forgejo_archive_checksum}" ]] ||
+      e2e_die "cached Forgejo image checksum is missing" || return
+    expected_checksum="$(<"${e2e_forgejo_archive_checksum}")"
+    [[ "${expected_checksum}" =~ ^[0-9a-f]{64}$ ]] ||
+      e2e_die "cached Forgejo image checksum is invalid" || return
+    actual_checksum="$(e2e_archive_checksum "${e2e_forgejo_archive}")" || return
+    [[ "${actual_checksum}" == "${expected_checksum}" ]] ||
+      e2e_die "cached Forgejo image checksum does not match" || return
+    skopeo inspect "oci-archive:${e2e_forgejo_archive}" >/dev/null ||
+      e2e_die "cached Forgejo image is unreadable" || return
+    archive_reference="$(e2e_archive_reference "${e2e_forgejo_archive}")" ||
+      e2e_die "cached Forgejo image reference is unreadable" || return
+    [[ "${archive_reference}" == "${e2e_forgejo_local_image}" ]] ||
+      e2e_die "cached Forgejo image has unexpected reference ${archive_reference}" || return
+    printf 'Using cached Forgejo image %s.\n' "${e2e_forgejo_archive}"
+    return
+  fi
+
+  partial_archive="${e2e_forgejo_archive}.partial"
+  partial_checksum="${e2e_forgejo_archive_checksum}.partial"
+  rm -f -- "${partial_archive}" "${partial_checksum}"
+  printf 'Caching Forgejo image %s.\n' "${e2e_forgejo_source_image}"
+  if ! skopeo \
+    --insecure-policy \
+    copy \
+    --preserve-digests \
+    --retry-times 5 \
+    "docker://${e2e_forgejo_source_image}" \
+    "oci-archive:${partial_archive}:${e2e_forgejo_local_image}"; then
+    rm -f -- "${partial_archive}" "${partial_checksum}"
+    return 1
+  fi
+
+  skopeo inspect "oci-archive:${partial_archive}" >/dev/null || {
+    rm -f -- "${partial_archive}" "${partial_checksum}"
+    e2e_die "downloaded Forgejo image is unreadable"
+    return
+  }
+  archive_reference="$(e2e_archive_reference "${partial_archive}")" || {
+    rm -f -- "${partial_archive}" "${partial_checksum}"
+    e2e_die "downloaded Forgejo image reference is unreadable"
+    return
+  }
+  if [[ "${archive_reference}" != "${e2e_forgejo_local_image}" ]]; then
+    rm -f -- "${partial_archive}" "${partial_checksum}"
+    e2e_die "downloaded Forgejo image has unexpected reference ${archive_reference}"
+    return
+  fi
+  e2e_archive_checksum "${partial_archive}" >"${partial_checksum}"
+  mv -- "${partial_archive}" "${e2e_forgejo_archive}"
+  mv -- "${partial_checksum}" "${e2e_forgejo_archive_checksum}"
+}
+
+e2e_remove_image_cache() {
+  if [[ "${e2e_cache_dir}" != "${e2e_repository_root}/.cache/e2e" ]]; then
+    e2e_die "refusing to remove non-default E2E cache: ${e2e_cache_dir}"
+    return
+  fi
+  rm -rf -- "${e2e_cache_dir}"
+  rmdir -- "${e2e_repository_root}/.cache" 2>/dev/null || true
 }
 
 e2e_remove_podman_home() {

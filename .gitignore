@@ -2,6 +2,7 @@
 result
 result-*
 .e2e/
+.cache/
 .direnv/
 .env
 .env.*

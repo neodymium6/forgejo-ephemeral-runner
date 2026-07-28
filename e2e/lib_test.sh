@@ -28,6 +28,22 @@ info) ;;
 *) exit 1 ;;
 esac
 EOF
+cat >"${test_dir}/bin/skopeo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " == *" copy "* ]]; then
+  destination="${*: -1}"
+  archive="${destination#oci-archive:}"
+  archive="${archive%%:*}"
+  : >"${archive}"
+fi
+EOF
+cat >"${test_dir}/bin/tar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '{"manifests":[{"annotations":{"org.opencontainers.image.ref.name":"%s"}}]}\n' \
+  "${E2E_ARCHIVE_REF}"
+EOF
 cat >"${test_dir}/bin/df" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -37,6 +53,8 @@ EOF
 chmod +x "${test_dir}/bin/df"
 
 chmod +x "${test_dir}/bin/podman"
+chmod +x "${test_dir}/bin/skopeo"
+chmod +x "${test_dir}/bin/tar"
 E2E_PODMAN_LOG="${test_dir}/podman.log"
 export E2E_PODMAN_LOG
 
@@ -62,6 +80,26 @@ if e2e_select_provider >/dev/null 2>&1; then
   fail 'invalid provider was accepted'
 fi
 unset E2E_CONTAINER_PROVIDER
+
+e2e_cache_dir="${test_dir}/cache/e2e"
+e2e_forgejo_archive="${e2e_cache_dir}/forgejo-${e2e_forgejo_source_digest#sha256:}.tar"
+e2e_forgejo_archive_checksum="${e2e_forgejo_archive}.sha256"
+E2E_ARCHIVE_REF="${e2e_forgejo_local_image}"
+export E2E_ARCHIVE_REF
+e2e_prepare_forgejo_cache
+[[ -f "${e2e_forgejo_archive}" ]] || fail 'Forgejo image cache was not created'
+[[ -f "${e2e_forgejo_archive_checksum}" ]] || fail 'Forgejo image cache checksum was not created'
+e2e_prepare_forgejo_cache
+E2E_ARCHIVE_REF=docker.io/library/unexpected:latest
+if e2e_prepare_forgejo_cache >/dev/null 2>&1; then
+  fail 'Forgejo cache with an unexpected image reference was accepted'
+fi
+E2E_ARCHIVE_REF="${e2e_forgejo_local_image}"
+e2e_prepare_forgejo_cache
+printf 'corruption' >>"${e2e_forgejo_archive}"
+if e2e_prepare_forgejo_cache >/dev/null 2>&1; then
+  fail 'Forgejo cache with an unexpected checksum was accepted'
+fi
 
 cat >"${test_dir}/bin/kind" <<'EOF'
 #!/usr/bin/env bash

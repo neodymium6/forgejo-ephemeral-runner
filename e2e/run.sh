@@ -134,7 +134,7 @@ if ((forgejo_port < 1024 || forgejo_port > 65535)); then
   exit 1
 fi
 
-e2e_require_command base64 curl df jq kind kubectl kustomize nix
+e2e_require_command base64 curl df jq kind kubectl kustomize nix sha256sum skopeo tar
 e2e_assert_free_disk
 provider="$(e2e_select_provider)"
 if e2e_cluster_exists "${provider}"; then
@@ -148,6 +148,7 @@ printf '%s\n' "${provider}" >"${e2e_provider_file}"
 if [[ "${provider}" == podman ]]; then
   e2e_prepare_podman_home
 fi
+e2e_prepare_forgejo_cache
 
 printf 'Creating dedicated Kind cluster %s with %s.\n' \
   "${e2e_cluster_name}" "${provider}"
@@ -156,6 +157,8 @@ e2e_kind "${provider}" create cluster \
   --kubeconfig "${e2e_kubeconfig}" \
   --wait 120s
 
+e2e_kind "${provider}" load image-archive \
+  --name "${e2e_cluster_name}" "${e2e_forgejo_archive}"
 e2e_kubectl apply --kustomize "${script_dir}/manifests/forgejo"
 e2e_kubectl rollout status \
   --namespace "${forgejo_namespace}" \

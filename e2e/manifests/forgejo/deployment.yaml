@@ -21,9 +21,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: forgejo
-          # yamllint disable-line rule:line-length
-          image: codeberg.org/forgejo/forgejo@sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c
-          imagePullPolicy: IfNotPresent
+          # Loaded from the digest-verified E2E image cache before deployment.
+          image: docker.io/library/forgejo-e2e:15.0.5
+          imagePullPolicy: Never
           env:
             - name: USER_UID
               value: "1000"

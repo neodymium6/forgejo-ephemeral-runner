@@ -42,3 +42,6 @@ e2e:
 
 e2e-clean:
     bash e2e/cleanup.sh
+
+e2e-cache-clean:
+    bash e2e/cache-cleanup.sh
