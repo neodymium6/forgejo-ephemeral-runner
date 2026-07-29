@@ -117,7 +117,7 @@
             };
             e2e-proxy-image = pkgs.dockerTools.buildLayeredImage {
               name = "forgejo-ephemeral-runner-e2e-proxy";
-              tag = version;
+              tag = "e2e";
               contents = [
                 e2eProxy
                 pkgs.cacert

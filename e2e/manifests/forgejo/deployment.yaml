@@ -74,7 +74,7 @@ spec:
             - name: data
               mountPath: /data
         - name: registration-gate
-          image: forgejo-ephemeral-runner-e2e-proxy:0.2.0-dev
+          image: forgejo-ephemeral-runner-e2e-proxy:e2e
           imagePullPolicy: Never
           env:
             - name: LISTEN_ADDR
