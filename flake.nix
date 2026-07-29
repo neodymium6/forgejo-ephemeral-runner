@@ -141,6 +141,7 @@
               pkgs.gnugrep
               pkgs.gnused
               pkgs.jq
+              pkgs.which
             ];
           };
         }

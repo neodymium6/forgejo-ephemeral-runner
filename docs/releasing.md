@@ -67,6 +67,10 @@ git push origin v0.2.0
 6. creates a Forgejo Release with a JSON manifest, checksums, and immutable
    `name@sha256:...` references.
 
+The workflow places its pinned release action dependencies, including `curl`,
+`jq`, and `which`, on the action path from the Nix-built `release-tools`
+package. It does not install packages in the disposable runner at runtime.
+
 The script never creates `latest`. A registry may recompress layers while
 preserving their uncompressed content, so resumability compares the image
 configuration digest rather than the transport manifest digest. If a version
