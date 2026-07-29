@@ -56,8 +56,9 @@
             "drop": ["ALL"]
           },
           "readOnlyRootFilesystem": false,
-          "runAsNonRoot": false,
-          "runAsUser": 0
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532
         },
         "resources": {
           "requests": {
@@ -108,7 +109,7 @@
         "name": "runner-credential",
         "secret": {
           "secretName": "{{ .CredentialSecretName }}",
-          "defaultMode": 256
+          "defaultMode": 288
         }
       },
       {

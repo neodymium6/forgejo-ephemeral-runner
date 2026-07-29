@@ -172,10 +172,12 @@ part of recovery.
 
 ## Nix execution
 
-Nix runs as root inside the unprivileged runner container because it must write
-to the image's `/nix/store`. All Linux capabilities are dropped and privilege
-escalation is disabled. No Nix store is shared between Pods in the base design.
-This avoids cross-job cache poisoning at the cost of downloads and build time.
+Nix runs in single-user mode as the dedicated UID and GID 65532. The image gives
+that identity ownership of its private Nix store and state directory; it does
+not grant root, Linux capabilities, or privilege escalation. In particular, a
+workflow cannot create Nix's reserved `/homeless-shelter` build-home path at the
+filesystem root. No Nix store is shared between Pods in the base design. This
+avoids cross-job cache poisoning at the cost of downloads and build time.
 
 A future shared cache should use a content-addressed binary cache with signing
 and explicit trust policy instead of a writable shared `/nix` volume.

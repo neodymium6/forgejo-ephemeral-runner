@@ -13,6 +13,8 @@ import (
 
 const runnerServiceAccountName = "forgejo-runner-job"
 
+const runnerUserID int64 = 65532
+
 type runnerPodTemplate struct {
 	APIVersion string                    `json:"apiVersion"`
 	Kind       string                    `json:"kind"`
@@ -72,6 +74,7 @@ type kubernetesContainerSecurityContext struct {
 	Privileged               *bool                   `json:"privileged,omitempty"`
 	ProcMount                string                  `json:"procMount,omitempty"`
 	ReadOnlyRootFilesystem   *bool                   `json:"readOnlyRootFilesystem,omitempty"`
+	RunAsGroup               *int64                  `json:"runAsGroup,omitempty"`
 	RunAsNonRoot             *bool                   `json:"runAsNonRoot,omitempty"`
 	RunAsUser                *int64                  `json:"runAsUser,omitempty"`
 }
@@ -184,7 +187,7 @@ func validateRunnerPodTemplate(pod runnerPodTemplate, data runnerPodTemplateData
 		return errors.New("runner Pod template must not share host network, PID, IPC, or process namespaces")
 	}
 	podSecurity := pod.Spec.SecurityContext
-	if podSecurity.FSGroup == nil || *podSecurity.FSGroup != 65532 || podSecurity.FSGroupChangePolicy != "OnRootMismatch" {
+	if podSecurity.FSGroup == nil || *podSecurity.FSGroup != runnerUserID || podSecurity.FSGroupChangePolicy != "OnRootMismatch" {
 		return errors.New("runner Pod template must use the reviewed filesystem group")
 	}
 	if podSecurity.SeccompProfile == nil || podSecurity.SeccompProfile.Type != "RuntimeDefault" {
@@ -242,8 +245,10 @@ func validateRunnerContainer(container kubernetesContainer, runnerImage string) 
 	if security.ProcMount != "" && security.ProcMount != "Default" {
 		return errors.New("runner container must use the default proc mount")
 	}
-	if security.RunAsUser == nil || *security.RunAsUser != 0 || security.RunAsNonRoot == nil || *security.RunAsNonRoot {
-		return errors.New("runner container must use the reviewed root-in-container execution model")
+	if security.RunAsUser == nil || *security.RunAsUser != runnerUserID ||
+		security.RunAsGroup == nil || *security.RunAsGroup != runnerUserID ||
+		security.RunAsNonRoot == nil || !*security.RunAsNonRoot {
+		return errors.New("runner container must use the reviewed non-root execution identity")
 	}
 	if len(container.Ports) != 0 {
 		return errors.New("runner container must not expose container or host ports")
@@ -313,8 +318,8 @@ func validateRunnerVolumes(volumes []kubernetesVolume, credentialName string) er
 				return errors.New("runner-config must use the reviewed ConfigMap")
 			}
 		case "runner-credential":
-			if volume.Secret == nil || volume.Secret.SecretName != credentialName || volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o400 || volume.ConfigMap != nil || volume.EmptyDir != nil {
-				return errors.New("runner-credential must use only the slot credential with mode 0400")
+			if volume.Secret == nil || volume.Secret.SecretName != credentialName || volume.Secret.DefaultMode == nil || *volume.Secret.DefaultMode != 0o440 || volume.ConfigMap != nil || volume.EmptyDir != nil {
+				return errors.New("runner-credential must use only the slot credential with mode 0440")
 			}
 		case "workspace", "home", "tmp":
 			if volume.EmptyDir == nil || strings.TrimSpace(volume.EmptyDir.SizeLimit) == "" || volume.ConfigMap != nil || volume.Secret != nil {

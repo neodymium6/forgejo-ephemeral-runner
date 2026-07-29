@@ -49,9 +49,18 @@
             ];
             text = builtins.readFile ./scripts/run-one-job.sh;
           };
+          runnerUID = 65532;
+          runnerGID = 65532;
+          runnerUser = "runner";
+          runnerNss = pkgs.dockerTools.fakeNss.override {
+            extraPasswdLines = [
+              "${runnerUser}:x:${toString runnerUID}:${toString runnerGID}:Forgejo runner:/home/runner:/bin/sh"
+            ];
+            extraGroupLines = [ "${runnerUser}:x:${toString runnerGID}:" ];
+          };
           runnerContents = [
             pkgs.bash
-            pkgs.dockerTools.fakeNss
+            runnerNss
             pkgs.dockerTools.usrBinEnv
             pkgs.cacert
             pkgs.coreutils
@@ -70,12 +79,24 @@
             runner-image = pkgs.dockerTools.buildLayeredImageWithNixDb {
               name = "forgejo-ephemeral-runner";
               tag = version;
+              uid = runnerUID;
+              gid = runnerGID;
+              uname = runnerUser;
+              gname = runnerUser;
               contents = runnerContents;
+              fakeRootCommands = ''
+                mkdir -p home/runner workspace tmp
+                chown -R ${toString runnerUID}:${toString runnerGID} nix home/runner workspace tmp
+                chmod 1777 tmp
+              '';
               config = {
-                User = "0:0";
+                User = "${toString runnerUID}:${toString runnerGID}";
                 WorkingDir = "/workspace";
                 Env = [
                   "PATH=${pkgs.lib.makeBinPath runnerContents}"
+                  "HOME=/home/runner"
+                  "USER=${runnerUser}"
+                  "LOGNAME=${runnerUser}"
                   "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                   "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 ];

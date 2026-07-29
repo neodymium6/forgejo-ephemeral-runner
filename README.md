@@ -50,6 +50,8 @@ Forgejo 15.0.5, and the pinned Nixpkgs input currently supplies Forgejo Runner
   Baseline enforcement.
 - The workflow runs as `host` from Forgejo's perspective, but that host is the
   disposable runner container, not the Kubernetes node.
+- Workflow processes and single-user Nix run as the dedicated non-root UID and
+  GID 65532.
 - Runner workspace, home, temporary files, Nix store changes, and writable
   image layer disappear with the Pod.
 - Stale cleanup requires the exact deterministic name, project description,

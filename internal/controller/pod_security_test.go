@@ -94,6 +94,27 @@ func TestValidateRunnerPodTemplateRejectsUnsafeChanges(t *testing.T) {
 			},
 		},
 		{
+			name:      "root user",
+			wantError: "non-root execution identity",
+			mutateFunc: func(pod *runnerPodTemplate) {
+				pod.Spec.Containers[0].SecurityContext.RunAsUser = testPointer[int64](0)
+			},
+		},
+		{
+			name:      "root group",
+			wantError: "non-root execution identity",
+			mutateFunc: func(pod *runnerPodTemplate) {
+				pod.Spec.Containers[0].SecurityContext.RunAsGroup = testPointer[int64](0)
+			},
+		},
+		{
+			name:      "non-root disabled",
+			wantError: "non-root execution identity",
+			mutateFunc: func(pod *runnerPodTemplate) {
+				pod.Spec.Containers[0].SecurityContext.RunAsNonRoot = testPointer(false)
+			},
+		},
+		{
 			name:      "added capability",
 			wantError: "drop ALL",
 			mutateFunc: func(pod *runnerPodTemplate) {
@@ -147,6 +168,13 @@ func TestValidateRunnerPodTemplateRejectsUnsafeChanges(t *testing.T) {
 			wantError: "slot credential",
 			mutateFunc: func(pod *runnerPodTemplate) {
 				pod.Spec.Volumes[1].Secret.SecretName = "another-secret"
+			},
+		},
+		{
+			name:      "root-only credential mode",
+			wantError: "mode 0440",
+			mutateFunc: func(pod *runnerPodTemplate) {
+				pod.Spec.Volumes[1].Secret.DefaultMode = testPointer[int32](0o400)
 			},
 		},
 		{
@@ -253,13 +281,6 @@ func TestDecodeRunnerPodTemplateRejectsUnknownFields(t *testing.T) {
 			name: "container lifecycle",
 			mutateFunc: func(pod map[string]any) {
 				rawRunnerContainer(pod)["lifecycle"] = map[string]any{}
-			},
-		},
-		{
-			name: "container runAsGroup",
-			mutateFunc: func(pod map[string]any) {
-				security := rawRunnerContainer(pod)["securityContext"].(map[string]any)
-				security["runAsGroup"] = float64(0)
 			},
 		},
 		{
