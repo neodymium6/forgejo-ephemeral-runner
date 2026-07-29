@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: linux-amd64
+    runs-on: forgejo-ephemeral-amd64
     timeout-minutes: 90
     env:
       NIX_CONFIG: |
