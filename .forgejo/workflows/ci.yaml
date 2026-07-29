@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify the runner runtime
-        run: test -x /usr/bin/env
+        run: bash scripts/verify-runner-runtime.sh
 
       - name: Run project checks
         run: nix develop --command just check

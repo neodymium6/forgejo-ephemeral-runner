@@ -77,7 +77,9 @@ just check
 The Forgejo workflow in `.forgejo/workflows/ci.yaml` runs `just check` on pushes
 to `main` and on manual dispatch. It verifies formatting, unit and race tests,
 the launcher and E2E helper tests, static analysis, manifest rendering, and Nix
-flake evaluation.
+flake evaluation. Before those checks, it also verifies the non-root runner
+identity, private Nix store access, inability to create `/homeless-shelter`, and
+two consecutive Nix builds.
 
 The full end-to-end harness is deliberately separate from default CI. It needs
 a Docker or Podman service to create a fixed, disposable Kind cluster and is
