@@ -83,18 +83,15 @@ inspect_archive() {
 inspect_archive "$runner_archive" "65532:65532" "/workspace" ""
 inspect_archive "$controller_archive" "65532:65532" "" "/bin/controller"
 
-prepare_image() {
-  local name=$1
-  local archive=$2
-  local directory="$work_dir/$name"
+archive_digest() {
+  local archive=$1
 
-  install -d "$directory"
-  skopeo copy --insecure-policy "docker-archive:$archive" "dir:$directory" >/dev/null
-  jq -r '.Digest' < <(skopeo inspect --insecure-policy "dir:$directory")
+  skopeo inspect --insecure-policy "docker-archive:$archive" |
+    jq -er '.Digest | select(test("^sha256:[0-9a-f]{64}$"))'
 }
 
-runner_digest=$(prepare_image runner "$runner_archive")
-controller_digest=$(prepare_image controller "$controller_archive")
+runner_digest=$(archive_digest "$runner_archive")
+controller_digest=$(archive_digest "$controller_archive")
 
 if $dry_run; then
   printf 'runner %s\ncontroller %s\n' "$runner_digest" "$controller_digest"
@@ -134,7 +131,8 @@ unset REGISTRY_TOKEN registry_token
 publish_image() {
   local name=$1
   local expected_digest=$2
-  local source="dir:$work_dir/$name"
+  local archive=$3
+  local source="docker-archive:$archive"
   local repository_ref="$registry/$repository/$name"
   local destination="docker://$repository_ref:$version"
   local tags
@@ -166,8 +164,8 @@ publish_image() {
   printf '%s@%s' "$repository_ref" "$remote_digest"
 }
 
-runner_ref=$(publish_image runner "$runner_digest")
-controller_ref=$(publish_image controller "$controller_digest")
+runner_ref=$(publish_image runner "$runner_digest" "$runner_archive")
+controller_ref=$(publish_image controller "$controller_digest" "$controller_archive")
 
 release_dir=dist/release
 install -d "$release_dir"
