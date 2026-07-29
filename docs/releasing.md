@@ -39,6 +39,12 @@ architecture, working directory, and controller entrypoint, then prints each
 image configuration digest. The configuration digest covers the runtime
 configuration and uncompressed filesystem-layer identities.
 
+Image inspection and publication stage temporary container data under the
+ignored `.release-tmp/` directory in the checkout. Allow at least 1 GiB of free
+space there for the current runner image. Set `RELEASE_TMPDIR` to an alternative
+private directory when the checkout filesystem is too small; the per-run
+subdirectory is always removed on exit.
+
 ## Publish
 
 Create the tag on the reviewed `main` commit and push only that tag:

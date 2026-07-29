@@ -45,11 +45,19 @@ if [[ -n $(git status --porcelain) ]]; then
   fail "the Git worktree must be clean"
 fi
 
-work_dir=$(mktemp -d)
+work_root=${RELEASE_TMPDIR:-"$PWD/.release-tmp"}
+install -d -m 0700 "$work_root"
+work_dir=$(mktemp -d "$work_root/publish.XXXXXXXX")
 cleanup() {
   rm -rf -- "$work_dir"
 }
 trap cleanup EXIT
+
+skopeo_tmp_dir="$work_dir/skopeo"
+install -d "$skopeo_tmp_dir"
+skopeo_run() {
+  command skopeo --tmpdir "$skopeo_tmp_dir" "$@"
+}
 
 controller_archive=$(nix build .#controller-image --no-link --print-out-paths)
 runner_archive=$(nix build .#runner-image --no-link --print-out-paths)
@@ -61,7 +69,7 @@ inspect_archive() {
   local expected_entrypoint_suffix=$4
   local config
 
-  config=$(skopeo inspect --insecure-policy --config "docker-archive:$archive")
+  config=$(skopeo_run inspect --insecure-policy --config "docker-archive:$archive")
   [[ $(jq -r '.architecture' <<<"$config") == amd64 ]] || fail "$archive is not amd64"
   [[ $(jq -r '.os' <<<"$config") == linux ]] || fail "$archive is not a Linux image"
   [[ $(jq -r '.config.User' <<<"$config") == "$expected_user" ]] ||
@@ -86,7 +94,7 @@ inspect_archive "$controller_archive" "65532:65532" "" "/bin/controller"
 archive_config_digest() {
   local archive=$1
 
-  skopeo inspect --insecure-policy --raw "docker-archive:$archive" |
+  skopeo_run inspect --insecure-policy --raw "docker-archive:$archive" |
     jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
 }
 
@@ -125,7 +133,7 @@ registry=${BASH_REMATCH[1]}
 
 auth_file="$work_dir/auth.json"
 printf '%s' "$registry_token" |
-  skopeo login --authfile "$auth_file" --username "$registry_username" --password-stdin "$registry" >/dev/null
+  skopeo_run login --authfile "$auth_file" --username "$registry_username" --password-stdin "$registry" >/dev/null
 unset REGISTRY_TOKEN registry_token
 
 publish_image() {
@@ -139,23 +147,23 @@ publish_image() {
   local remote_config_digest
   local remote_digest
 
-  tags=$(skopeo list-tags --authfile "$auth_file" "docker://$repository_ref")
+  tags=$(skopeo_run list-tags --authfile "$auth_file" "docker://$repository_ref")
   if jq -e --arg tag "$version" '.Tags | index($tag) != null' <<<"$tags" >/dev/null; then
     remote_config_digest=$(
-      skopeo inspect --authfile "$auth_file" --raw "$destination" |
+      skopeo_run inspect --authfile "$auth_file" --raw "$destination" |
         jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
     )
     [[ $remote_config_digest == "$expected_config_digest" ]] ||
       fail "$repository_ref:$version already exists with different image content"
   else
-    skopeo copy \
+    skopeo_run copy \
       --insecure-policy \
       --retry-times 3 \
       --authfile "$auth_file" \
       "$source" \
       "$destination" >/dev/null
     remote_config_digest=$(
-      skopeo inspect --authfile "$auth_file" --raw "$destination" |
+      skopeo_run inspect --authfile "$auth_file" --raw "$destination" |
         jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
     )
     [[ $remote_config_digest == "$expected_config_digest" ]] ||
@@ -163,7 +171,7 @@ publish_image() {
   fi
 
   remote_digest=$(
-    skopeo inspect --authfile "$auth_file" "$destination" |
+    skopeo_run inspect --authfile "$auth_file" "$destination" |
       jq -er '.Digest | select(test("^sha256:[0-9a-f]{64}$"))'
   )
 

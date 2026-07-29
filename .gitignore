@@ -12,5 +12,6 @@ result-*
 *.key
 *.token
 .runner
+.release-tmp/
 *.orig
 *.rej
