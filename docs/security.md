@@ -55,6 +55,21 @@ operation available to the account and token. Repository and organization
 Actions secrets are outside this project's control: Forgejo sends them to
 eligible workflows. Protect branches that can modify workflows.
 
+## Release credentials
+
+The tag-triggered release workflow receives a registry credential through the
+`REGISTRY_TOKEN` Actions secret. The credential should grant package write
+access only; it does not need repository administration or runner-management
+access. The workflow uses Forgejo's job token separately to create a Release in
+the same repository.
+
+A version tag selects the exact source that receives the registry credential.
+Protect the `v*.*.*` tag pattern so unreviewed commits cannot trigger a release.
+The workflow does not run for pull requests, does not publish mutable `latest`
+tags, refuses to replace an existing version with a different digest, and does
+not deploy the resulting images to Kubernetes. The Actions runner and Forgejo
+instance remain trusted parts of this release boundary.
+
 ## Kubernetes permissions
 
 The controller service account can create Pods and Secrets in its own
