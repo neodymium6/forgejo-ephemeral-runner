@@ -7,7 +7,9 @@ e2e_cache_dir="${E2E_CACHE_DIR:-${e2e_repository_root}/.cache/e2e}"
 e2e_kubeconfig="${e2e_state_dir}/kubeconfig"
 e2e_provider_file="${e2e_state_dir}/provider"
 e2e_podman_home="${e2e_state_dir}/podman-home"
-e2e_podman_policy="${e2e_podman_home}/.config/containers/policy.json"
+e2e_podman_config_home="${e2e_podman_home}/.config"
+e2e_podman_data_home="${e2e_podman_home}/.local/share"
+e2e_podman_policy="${e2e_podman_config_home}/containers/policy.json"
 e2e_minimum_free_kib=$((10 * 1024 * 1024))
 e2e_forgejo_source_image="codeberg.org/forgejo/forgejo@sha256:eda2e378442d2f18cfa563994f8ad66e71f04ac9c3bb4259cc57bdd641890f5c"
 e2e_forgejo_source_digest="${e2e_forgejo_source_image##*@}"
@@ -37,7 +39,12 @@ e2e_assert_safe_cluster_name() {
 
 e2e_runtime_works() {
   local provider="$1"
-  command -v "${provider}" >/dev/null 2>&1 && "${provider}" info >/dev/null 2>&1
+  command -v "${provider}" >/dev/null 2>&1 || return
+  if [[ "${provider}" == podman ]]; then
+    e2e_podman info >/dev/null 2>&1
+  else
+    "${provider}" info >/dev/null 2>&1
+  fi
 }
 
 e2e_select_provider() {
@@ -87,6 +94,13 @@ e2e_prepare_podman_home() {
     '{' \
     '  "default": [{"type": "insecureAcceptAnything"}]' \
     '}' >"${e2e_podman_policy}"
+}
+
+e2e_podman() {
+  HOME="${e2e_podman_home}" \
+    XDG_CONFIG_HOME="${e2e_podman_config_home}" \
+    XDG_DATA_HOME="${e2e_podman_data_home}" \
+    podman "$@"
 }
 
 e2e_archive_checksum() {
@@ -171,8 +185,8 @@ e2e_remove_podman_home() {
     e2e_die "refusing to remove unexpected Podman home: ${e2e_podman_home}"
     return 1
   fi
-  if [[ -d "${e2e_podman_home}/.local/share/containers/storage" ]]; then
-    HOME="${e2e_podman_home}" podman image rm --all --force >/dev/null
+  if [[ -d "${e2e_podman_data_home}/containers/storage" ]]; then
+    e2e_podman image rm --all --force >/dev/null
   fi
   rm -rf -- "${e2e_podman_home}"
 }
@@ -182,6 +196,8 @@ e2e_kind() {
   shift
   if [[ "${provider}" == podman ]]; then
     HOME="${e2e_podman_home}" \
+      XDG_CONFIG_HOME="${e2e_podman_config_home}" \
+      XDG_DATA_HOME="${e2e_podman_data_home}" \
       KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"
   else
     KIND_EXPERIMENTAL_PROVIDER="${provider}" kind "$@"

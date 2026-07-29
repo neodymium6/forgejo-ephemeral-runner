@@ -84,10 +84,12 @@ port when the default `30080` is occupied; the next consecutive port is reserved
 for the E2E-only registration proxy.
 
 For Podman, the harness gives Kind subprocesses an isolated home directory at
-`.e2e/podman-home/`. Podman reads its generated signature policy from the
-standard per-user location inside that directory and keeps its E2E image storage
-there. The harness does not modify the real user home or system containers
-configuration. The Kind node image remains digest-pinned.
+`.e2e/podman-home/` and explicitly points `XDG_CONFIG_HOME` and
+`XDG_DATA_HOME` inside it. Podman reads its generated signature policy and
+keeps its E2E image storage under those isolated paths even when the invoking
+user exports different XDG locations. The harness does not modify the real user
+home or system containers configuration. The Kind node image remains
+digest-pinned.
 
 The harness refuses to delete any Kind cluster whose name differs from the
 fixed E2E name. It does not connect to an existing Forgejo instance, a live

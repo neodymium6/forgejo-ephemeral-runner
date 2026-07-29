@@ -22,9 +22,11 @@ e2e_assert_safe_cluster_name "${e2e_cluster_name}"
 cat >"${test_dir}/bin/podman" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s|%s|%s|%s\n' \
+  "${HOME}" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "$*" >>"${E2E_PODMAN_LOG}"
 case "$*" in
 info) ;;
-"image rm --all --force") printf '%s\n' "$*" >"${E2E_PODMAN_LOG}" ;;
+"image rm --all --force") ;;
 *) exit 1 ;;
 esac
 EOF
@@ -57,6 +59,9 @@ chmod +x "${test_dir}/bin/skopeo"
 chmod +x "${test_dir}/bin/tar"
 E2E_PODMAN_LOG="${test_dir}/podman.log"
 export E2E_PODMAN_LOG
+XDG_CONFIG_HOME="${test_dir}/inherited-config"
+XDG_DATA_HOME="${test_dir}/inherited-data"
+export XDG_CONFIG_HOME XDG_DATA_HOME
 
 original_path="${PATH}"
 PATH="${test_dir}/bin:${PATH}"
@@ -73,6 +78,10 @@ export PATH
 
 provider="$(e2e_select_provider)"
 [[ "${provider}" == podman ]] || fail "selected ${provider}, expected podman"
+[[ "$(<"${E2E_PODMAN_LOG}")" == \
+  "${e2e_podman_home}|${e2e_podman_config_home}|${e2e_podman_data_home}|info" ]] ||
+  fail 'Podman provider check inherited user HOME or XDG paths'
+rm -- "${E2E_PODMAN_LOG}"
 
 E2E_CONTAINER_PROVIDER=invalid
 export E2E_CONTAINER_PROVIDER
@@ -108,7 +117,8 @@ if [[ "$*" == 'get clusters' ]]; then
   printf '%s\n' forgejo-ephemeral-runner-e2e unrelated-cluster
   exit 0
 fi
-printf '%s|%s|%s\n' "${HOME}" "${CONTAINERS_POLICY_JSON:-}" "$*" >>"${E2E_KIND_LOG}"
+printf '%s|%s|%s|%s\n' \
+  "${HOME}" "${XDG_CONFIG_HOME:-}" "${XDG_DATA_HOME:-}" "$*" >>"${E2E_KIND_LOG}"
 EOF
 chmod +x "${test_dir}/bin/kind"
 E2E_KIND_LOG="${test_dir}/kind.log"
@@ -117,7 +127,8 @@ export E2E_KIND_LOG
 e2e_cluster_exists podman || fail 'dedicated cluster was not detected'
 e2e_kind podman version
 [[ "$(<"${E2E_KIND_LOG}")" == \
-  "${e2e_podman_home}||version" ]] || fail 'Kind omitted the isolated E2E Podman home'
+  "${e2e_podman_home}|${e2e_podman_config_home}|${e2e_podman_data_home}|version" ]] ||
+  fail 'Kind inherited user HOME or XDG paths for Podman'
 rm -- "${E2E_KIND_LOG}"
 
 if e2e_delete_cluster podman unrelated-cluster >/dev/null 2>&1; then
@@ -132,17 +143,21 @@ e2e_state_dir="${test_state_dir}"
 e2e_kubeconfig="${test_state_dir}/kubeconfig"
 e2e_provider_file="${test_state_dir}/provider"
 e2e_podman_home="${test_state_dir}/podman-home"
-e2e_podman_policy="${e2e_podman_home}/.config/containers/policy.json"
+e2e_podman_config_home="${e2e_podman_home}/.config"
+e2e_podman_data_home="${e2e_podman_home}/.local/share"
+e2e_podman_policy="${e2e_podman_config_home}/containers/policy.json"
 e2e_prepare_podman_home
 [[ -f "${e2e_podman_policy}" ]] || fail 'Podman policy was not created'
-mkdir -p "${e2e_podman_home}/.local/share/containers/storage"
+mkdir -p "${e2e_podman_data_home}/containers/storage"
 e2e_delete_cluster podman "${e2e_cluster_name}"
 
 [[ ! -e "${e2e_podman_home}" ]] || fail 'Podman home was not removed'
-[[ "$(<"${E2E_PODMAN_LOG}")" == "image rm --all --force" ]] || fail 'Podman images were not removed first'
+[[ "$(<"${E2E_PODMAN_LOG}")" == \
+  "${e2e_podman_home}|${e2e_podman_config_home}|${e2e_podman_data_home}|image rm --all --force" ]] ||
+  fail 'Podman cleanup inherited user HOME or XDG paths'
 [[ "$(<"${E2E_KIND_LOG}")" == \
-  "${e2e_podman_home}||delete cluster --name ${e2e_cluster_name}" ]] ||
-  fail 'unexpected Kind delete arguments or Podman policy'
+  "${e2e_podman_home}|${e2e_podman_config_home}|${e2e_podman_data_home}|delete cluster --name ${e2e_cluster_name}" ]] ||
+  fail 'unexpected Kind delete arguments or Podman environment'
 
 cat >"${test_dir}/bin/kubectl" <<'EOF'
 #!/usr/bin/env bash
