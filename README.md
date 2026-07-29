@@ -191,7 +191,7 @@ kustomize build deploy/base | kubeconform -strict -summary
 
 ## Project status
 
-This is early-stage software at version `0.2.5`. The controller uses
+This is early-stage software at version `0.3.0`. The controller uses
 Forgejo's current runner API and does not call the deprecated
 `forgejo-runner register` command or create a `.runner` file. The default CI
 workflow runs the non-destructive `just check` suite; the disposable Kind E2E
@@ -202,8 +202,8 @@ Creating a Forgejo runner and recording its ID in Kubernetes cannot be one
 atomic transaction. On restart, the active controller lists runners at its
 configured allowlist scopes and safely removes only ephemeral registrations
 bearing its deterministic managed identity. Unit tests exercise this recovery
-path, and a
-successful local run of the disposable Forgejo E2E harness exercised the
+path, and a successful local run of the disposable Forgejo E2E harness
+exercised the
 corresponding failure-injection scenario.
 
 The project source is licensed under the
