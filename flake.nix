@@ -18,7 +18,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = "0.2.0-dev";
+          version = "0.2.0";
           controller = pkgs.buildGoModule {
             pname = "forgejo-ephemeral-runner-controller";
             inherit version;
@@ -112,6 +112,16 @@
         {
           default = controller;
           inherit controller;
+          release-tools = pkgs.symlinkJoin {
+            name = "forgejo-ephemeral-runner-release-tools";
+            paths = [
+              pkgs.coreutils
+              pkgs.curl
+              pkgs.gnugrep
+              pkgs.gnused
+              pkgs.jq
+            ];
+          };
         }
         // linuxImages
       );

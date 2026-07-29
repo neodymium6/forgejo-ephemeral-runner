@@ -21,6 +21,7 @@ audit:
     golangci-lint run ./...
     shellcheck scripts/*.sh e2e/*.sh
     yamllint -s deploy e2e/manifests e2e/fixtures
+    forgejo-runner validate --directory .
 
 manifests-check:
     kustomize build deploy/base | kubeconform -strict -summary
@@ -34,6 +35,9 @@ check: fmt-check unit audit manifests-check e2e-manifests-check
 
 images:
     nix build .#runner-image .#controller-image
+
+release-dry-run version:
+    bash scripts/publish-images.sh --dry-run "{{version}}"
 
 e2e-preflight:
     bash e2e/preflight.sh
