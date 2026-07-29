@@ -52,6 +52,7 @@
           runnerContents = [
             pkgs.bash
             pkgs.dockerTools.fakeNss
+            pkgs.dockerTools.usrBinEnv
             pkgs.cacert
             pkgs.coreutils
             pkgs.findutils
