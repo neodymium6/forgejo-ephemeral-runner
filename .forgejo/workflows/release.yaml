@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: linux-amd64
+    timeout-minutes: 90
+    env:
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+        sandbox = false
+        build-users-group =
+    steps:
+      - name: Check out the repository
+        uses: https://data.forgejo.org/actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the runner runtime
+        run: test -x /usr/bin/env
+
+      - name: Run project checks
+        run: nix develop --command just check
+
+      - name: Publish OCI images
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
+        run: nix develop --command scripts/publish-images.sh "${FORGEJO_REF_NAME#v}"
+
+      - name: Prepare release action dependencies
+        run: |
+          release_tools=$(nix build .#release-tools --no-link --print-out-paths)
+          if [[ -n ${FORGEJO_PATH:-} ]]; then
+            printf '%s/bin\n' "$release_tools" >>"$FORGEJO_PATH"
+          fi
+          if [[ -n ${GITHUB_PATH:-} && ${GITHUB_PATH:-} != ${FORGEJO_PATH:-} ]]; then
+            printf '%s/bin\n' "$release_tools" >>"$GITHUB_PATH"
+          fi
+
+      - name: Create Forgejo release
+        uses: https://data.forgejo.org/actions/forgejo-release@98265452477dafb3f0f27ba9c462c90b18cb44fd
+        with:
+          direction: upload
+          release-dir: dist/release
+          release-notes-file: dist/RELEASE_NOTES.md
+          override: false
