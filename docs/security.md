@@ -7,8 +7,10 @@ container and the network reachable from that Pod. The design protects the
 Kubernetes node and control plane by withholding privileged mode, host mounts,
 container-runtime sockets, and Kubernetes credentials from the runner.
 
-The controller is a separate Deployment with a separate service account. A
-standard Kubernetes NetworkPolicy denies ingress to controller and runner Pods.
+The controller is a separate Deployment with a separate service account. The
+base includes a standard Kubernetes NetworkPolicy that denies ingress to
+controller and runner Pods when the target cluster's CNI enforces
+NetworkPolicy. The manifest alone cannot enable enforcement in the CNI.
 
 ## Credentials
 
@@ -26,9 +28,10 @@ the Secret during cleanup. Before deleting the recorded Forgejo runner, it
 verifies that the ID still belongs to the deterministic slot name and matches
 the managed description and ephemeral flag; a mismatch fails closed.
 
-The API token remains a high-value credential. Use a dedicated Forgejo account,
-select the narrowest runner scope, and grant the narrowest route-level token
-scope that Forgejo supports. Forgejo 15 has no runner-only token permission:
+The API token remains a high-value credential. Prefer a dedicated Forgejo
+account when Forgejo's authorization checks permit it, select the narrowest
+runner scope, and grant the narrowest route-level token scope that Forgejo
+supports. Forgejo 15 has no runner-only token permission:
 
 | Runner endpoint | Route-level token scope |
 | --- | --- |
@@ -38,10 +41,14 @@ scope that Forgejo supports. Forgejo 15 has no runner-only token permission:
 | instance | `write:admin` |
 
 The account must also pass the ownership or administration checks for the
-selected endpoint. Forgejo documents repository-specific access tokens as
-limited to repository and issue scopes and unable to perform repository
-administrative operations. Verify that token type against the intended runner
-endpoint instead of assuming it is sufficient.
+selected endpoint. On Forgejo 15, the repository-scoped runner endpoint for a
+personal repository requires the actual repository owner; granting a separate
+collaborator administrative access is insufficient. In that case an
+owner-issued `write:repository` token is necessary. Moving the repository to an
+organization is the practical way to introduce a separate runner identity with
+appropriate organization authority. Verify the account and token type against
+the intended runner endpoint instead of assuming a collaborator or
+fine-grained repository token is sufficient.
 
 Compromise of either controller replica can exercise every runner-management
 operation available to the account and token. Repository and organization
@@ -70,15 +77,15 @@ automounted. The runner Pod receives no projected Kubernetes token.
 Before creating a runner Pod, the controller strictly decodes and validates
 the rendered template. Unknown fields are rejected. It permits exactly one
 configured runner image invoking the one-job launcher, literal reviewed
-environment values,
-the settings ConfigMap as the only `envFrom` source, the fixed unbound service
-account, the reviewed security context, and the five reviewed ConfigMap,
-credential Secret, and `emptyDir` volumes and mounts. Secret-backed `env` and
-`envFrom` sources, sidecars, init or ephemeral containers, host namespaces, host
-ports, privileged execution, added capabilities, mount propagation, host paths,
-projected tokens, persistent volumes, and CSI volumes are rejected. The
-base namespace also enforces the Kubernetes Pod Security Baseline as an admission-time backstop.
-Any future cache or volume design must update these checks explicitly.
+environment values, the settings ConfigMap as the only `envFrom` source, the
+fixed unbound service account, the reviewed security context, and the five
+reviewed ConfigMap, credential Secret, and `emptyDir` volumes and mounts.
+Secret-backed `env` and `envFrom` sources, sidecars, init or ephemeral
+containers, host namespaces, host ports, privileged execution, added
+capabilities, mount propagation, host paths, projected tokens, persistent
+volumes, and CSI volumes are rejected. The base namespace also carries labels
+requesting Kubernetes Pod Security Baseline enforcement as an admission-time
+backstop. Any future cache or volume design must update these checks explicitly.
 
 ## Leader election
 
@@ -112,9 +119,10 @@ the previous configuration.
 
 Polling adds up to one reconciliation interval before a job is observed. A job
 can also be canceled or claimed between listing and runner startup. These races
-should fail closed or be recovered by normal cleanup, but end-to-end failure
-injection also verifies recovery from a crash after Forgejo commits a runner
-registration and before Kubernetes records it.
+should fail closed or be recovered by normal cleanup. The opt-in E2E harness
+includes, and has exercised in a successful local run, a failure-injection
+scenario for a crash after Forgejo commits a runner registration and before
+Kubernetes records it.
 
 ## Lifecycle and stale cleanup
 
@@ -165,6 +173,8 @@ and explicit trust policy instead of a writable shared `/nix` volume.
 - Controller leader election depends on Kubernetes API availability.
 - Controller replicas both possess the long-lived Forgejo API token.
 - Forgejo 15 token scopes are broader than runner administration alone.
+- NetworkPolicy isolation is effective only when the target cluster's CNI
+  enforces it.
 - Generic NetworkPolicy cannot express Forgejo and binary-cache FQDN allowlists
   with the standard Kubernetes API.
 - The base does not restrict egress, so workflows can reach whatever cluster

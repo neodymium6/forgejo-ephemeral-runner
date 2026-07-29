@@ -1,7 +1,7 @@
 # Forgejo Ephemeral Runner for Kubernetes
 
-An experimental, small-footprint controller that gives each Forgejo Actions
-job a fresh Kubernetes Pod without implementing the Forgejo Actions protocol.
+A pre-release, small-footprint controller that gives each Forgejo Actions job
+a fresh Kubernetes Pod without implementing the Forgejo Actions protocol.
 
 The controller polls Forgejo 15's jobs API, creates a server-enforced ephemeral
 runner for each matching waiting job, and starts the official Forgejo Runner
@@ -25,9 +25,10 @@ two-replica controller Deployment
 
 `MAX_CONCURRENT` defaults to `1` and accepts values from `1` through `10`.
 Stalled `Pending` and `Unknown` Pods are recovered after configurable, positive
-timeouts; the base defaults to 30 minutes and 5 minutes respectively.
-Forgejo 15 or newer and the pinned Forgejo Runner 12.13.1 or a compatible newer
-version are required.
+timeouts; the base defaults to 30 minutes and 5 minutes respectively. The
+current development target is Forgejo 15. The disposable test fixture pins
+Forgejo 15.0.5, and the pinned Nixpkgs input currently supplies Forgejo Runner
+12.13.1. Other versions are not yet part of the tested compatibility surface.
 
 ## Security properties
 
@@ -45,7 +46,8 @@ version are required.
 - The controller strictly rejects unmodeled runner Pod fields and templates that
   change the reviewed image, launcher, environment sources, service account,
   containers, security context, volumes, or mounts.
-- The base namespace also enforces the Kubernetes Pod Security Baseline.
+- The base namespace carries labels requesting Kubernetes Pod Security
+  Baseline enforcement.
 - The workflow runs as `host` from Forgejo's perspective, but that host is the
   disposable runner container, not the Kubernetes node.
 - Runner workspace, home, temporary files, Nix store changes, and writable
@@ -70,8 +72,15 @@ nix develop
 just check
 ```
 
-The opt-in end-to-end test creates only the fixed, disposable Kind cluster
-documented in [docs/e2e.md](docs/e2e.md):
+The Forgejo workflow in `.forgejo/workflows/ci.yaml` runs `just check` on pushes
+to `main` and on manual dispatch. It verifies formatting, unit and race tests,
+the launcher and E2E helper tests, static analysis, manifest rendering, and Nix
+flake evaluation.
+
+The full end-to-end harness is deliberately separate from default CI. It needs
+a Docker or Podman service to create a fixed, disposable Kind cluster and is
+not intended to run inside the unprivileged runner Pod. See
+[docs/e2e.md](docs/e2e.md) before invoking it on an isolated development host:
 
 ```sh
 just e2e
@@ -85,8 +94,13 @@ nix build .#controller-image -o result-controller
 ```
 
 The runner image contains Forgejo Runner, Nix, Git, OpenSSH, Node.js, and the
-`one-job` launcher. The controller image contains the Go controller and CA
-certificates.
+`one-job` launcher. It also provides the conventional `/usr/bin/env` path from
+Nixpkgs coreutils for Actions that use `#!/usr/bin/env` entrypoints. The
+controller image contains the Go controller and CA certificates.
+
+Image publication is not automated yet. Build, publish, inspect, and pin both
+images by registry digest before changing a deployment overlay. The development
+tag `0.2.0-dev` is not an immutable deployment reference.
 
 ## Deployment
 
@@ -123,10 +137,13 @@ a runner-only permission:
 | `instance` | `write:admin` |
 
 Account ownership or administration checks still apply in addition to the
-token scope. Use a dedicated account and the narrowest practical runner scope.
-See the security document before choosing a repository-specific access token,
-because Forgejo restricts administrative repository operations for that token
-type.
+token scope. Prefer a dedicated account when Forgejo permits it for the
+selected scope. On Forgejo 15, repository-scoped runner APIs for a personal
+repository require the repository owner; an administrative collaborator is
+insufficient. Such a repository therefore needs an owner-issued
+`write:repository` token. Moving the repository to an organization is the
+practical path to separating the runner identity from a personal owner. See
+the security document before choosing an account and token type.
 
 The base reserves ten deterministic Pod, Secret, and runner names so that
 read/delete RBAC can remain name-restricted. If their base names or the Lease
@@ -146,16 +163,19 @@ kustomize build deploy/base | kubeconform -strict -summary
 
 ## Project status
 
-This is pre-release software. The controller uses Forgejo's current runner API
-and does not call the deprecated `forgejo-runner register` command or create a
-`.runner` file.
+This is pre-release software at version `0.2.0-dev`. The controller uses
+Forgejo's current runner API and does not call the deprecated
+`forgejo-runner register` command or create a `.runner` file. The default CI
+workflow runs the non-destructive `just check` suite; the disposable Kind E2E
+harness has passed on a local Podman development host, but remains an explicit
+operator test and is not a release gate.
 
 Creating a Forgejo runner and recording its ID in Kubernetes cannot be one
 atomic transaction. On restart, the active controller lists runners at its
 exact scope and safely removes only ephemeral registrations bearing its
-deterministic managed identity. Unit tests and the disposable Forgejo E2E suite
-cover a controller crash after Forgejo commits the registration but before
-Kubernetes records its ID.
+deterministic managed identity. Unit tests exercise this recovery path, and a
+successful local run of the disposable Forgejo E2E harness exercised the
+corresponding failure-injection scenario.
 
 The project source is licensed under the
 [Apache License 2.0](LICENSE).

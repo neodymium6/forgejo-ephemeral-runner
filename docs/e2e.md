@@ -5,6 +5,14 @@ The end-to-end harness is opt-in. It creates a dedicated Kind cluster named
 All `kubectl` calls use the kubeconfig generated under the ignored `.e2e/`
 directory.
 
+The complete harness has passed on a local Podman development host. It is not
+part of the default Forgejo CI workflow and is not required for every change.
+The base runner Pod intentionally has no host container-runtime socket,
+privileged mode, or nested-container service, so running this Kind harness
+inside that Pod is neither a supported nor an intended configuration. Use an
+isolated development host with its own Docker or Podman service when the
+additional lifecycle coverage is warranted.
+
 The cluster contains:
 
 - Forgejo 15.0.5 with an ephemeral SQLite database;
@@ -33,14 +41,14 @@ Kind environment and through the harness's localhost port forward.
 
 Use a Linux or macOS development host with a working Docker or Podman service.
 The Nix development shell supplies Kind, kubectl, curl, jq, and the remaining
-test tools. Approximately 4 GiB of memory is recommended. At least 10 GiB of free disk
-space is required, and the preflight check rejects hosts below that threshold.
-The first Forgejo image pull may take several minutes on a slow connection.
-The harness downloads the exact pinned source digest, stores it as a checksummed
-OCI archive under the ignored `.cache/e2e/` directory, and loads it into each
-disposable Kind cluster before deployment. Test data, credentials, and cluster
-state are still removed after each successful run; only the public Forgejo
-image layers persist.
+test tools. Approximately 4 GiB of memory is recommended. At least 10 GiB of
+free disk space is required, and the preflight check rejects hosts below that
+threshold. The first Forgejo image pull may take several minutes on a slow
+connection. The harness downloads the exact pinned source digest, stores it as
+a checksummed OCI archive under the ignored `.cache/e2e/` directory, and loads
+it into each disposable Kind cluster before deployment. Test data, credentials,
+and cluster state are still removed after each successful run; only the public
+Forgejo image layers persist.
 
 Check prerequisites without creating a cluster:
 
