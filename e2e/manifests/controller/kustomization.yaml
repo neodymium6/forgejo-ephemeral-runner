@@ -25,3 +25,13 @@ patches:
       - op: replace
         path: /data/MAX_CONCURRENT
         value: "2"
+      - op: replace
+        path: /data/RUNNER_IMAGE
+        value: forgejo-ephemeral-runner:e2e
+  - target:
+      kind: Deployment
+      name: forgejo-ephemeral-runner-controller
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: forgejo-ephemeral-runner-controller:e2e

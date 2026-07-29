@@ -75,10 +75,11 @@
             pkgs.openssh
             runOneJobScript
           ];
-          linuxImages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-            runner-image = pkgs.dockerTools.buildLayeredImageWithNixDb {
+          mkRunnerImage =
+            tag:
+            pkgs.dockerTools.buildLayeredImageWithNixDb {
               name = "forgejo-ephemeral-runner";
-              tag = version;
+              inherit tag;
               uid = runnerUID;
               gid = runnerGID;
               uname = runnerUser;
@@ -102,9 +103,11 @@
                 ];
               };
             };
-            controller-image = pkgs.dockerTools.buildLayeredImage {
+          mkControllerImage =
+            tag:
+            pkgs.dockerTools.buildLayeredImage {
               name = "forgejo-ephemeral-runner-controller";
-              tag = version;
+              inherit tag;
               contents = [
                 controller
                 pkgs.cacert
@@ -115,6 +118,11 @@
                 Env = [ "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ];
               };
             };
+          linuxImages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            runner-image = mkRunnerImage version;
+            controller-image = mkControllerImage version;
+            e2e-runner-image = mkRunnerImage "e2e";
+            e2e-controller-image = mkControllerImage "e2e";
             e2e-proxy-image = pkgs.dockerTools.buildLayeredImage {
               name = "forgejo-ephemeral-runner-e2e-proxy";
               tag = "e2e";

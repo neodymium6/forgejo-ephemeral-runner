@@ -276,8 +276,8 @@ e2e_api "/api/v1/repos/${api_user}/${repository}/contents/.forgejo/workflows/e2e
   >/dev/null
 
 printf '%s\n' 'Building and loading controller and runner images.'
-nix build .#runner-image --out-link "${e2e_state_dir}/runner-image"
-nix build .#controller-image --out-link "${e2e_state_dir}/controller-image"
+nix build .#e2e-runner-image --out-link "${e2e_state_dir}/runner-image"
+nix build .#e2e-controller-image --out-link "${e2e_state_dir}/controller-image"
 e2e_kind "${provider}" load image-archive \
   --name "${e2e_cluster_name}" "${e2e_state_dir}/runner-image"
 e2e_kind "${provider}" load image-archive \
