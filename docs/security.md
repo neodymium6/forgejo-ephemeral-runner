@@ -16,12 +16,15 @@ NetworkPolicy. The manifest alone cannot enable enforcement in the CNI.
 
 The long-lived Forgejo API token is available only to the two trusted
 controller replicas. Only the replica holding the Kubernetes Lease uses it for
-normal reconciliation. It lists jobs and creates, lists, and deletes runners at
-one configured Forgejo scope.
+normal reconciliation. One token is reused across every exact repository in the
+configured allowlist. The explicit `*` mode instead uses that token at the user
+runner scope.
 
 For each waiting job, the controller creates a temporary Kubernetes Secret
-containing the ephemeral runner UUID, one-job token, and opaque job handle.
-Only that Secret is mounted into its runner Pod. A workflow can read the
+containing the ephemeral runner UUID, one-job token, and opaque job handle. The
+repository scope is retained as Secret metadata for cleanup after a restart;
+it is not projected into the runner container. Only the credential data is
+mounted into its runner Pod. A workflow can read the
 credential because Forgejo Runner requires it, but Forgejo marks the runner
 ephemeral and `one-job --handle` targets one job attempt. The controller deletes
 the Secret during cleanup. Before deleting the recorded Forgejo runner, it
@@ -30,15 +33,15 @@ the managed description and ephemeral flag; a mismatch fails closed.
 
 The API token remains a high-value credential. Prefer a dedicated Forgejo
 account when Forgejo's authorization checks permit it, select the narrowest
-runner scope, and grant the narrowest route-level token scope that Forgejo
-supports. Forgejo 15 has no runner-only token permission:
+repository restrictions, and grant the narrowest route-level token scope that
+Forgejo supports. Forgejo 15 has no runner-only token permission. Exact
+repository entries normally require `write:repository`; the explicit `*` mode
+uses the user runner endpoint and requires `write:user`:
 
 | Runner endpoint | Route-level token scope |
 | --- | --- |
 | user | `write:user` |
-| organization | `write:organization` |
 | repository | `write:repository` |
-| instance | `write:admin` |
 
 The account must also pass the ownership or administration checks for the
 selected endpoint. On Forgejo 15, the repository-scoped runner endpoint for a
@@ -149,7 +152,7 @@ matching job is waiting.
 A controller crash can happen after Forgejo commits runner creation but before
 Kubernetes records its ID. The two APIs provide neither a shared transaction
 nor an idempotency key. Before creating a registration for a free slot, the
-controller therefore lists runners directly owned by its configured scope. It
+controller therefore lists runners directly owned by its configured scopes. It
 deletes a stale runner only when all of the following match:
 
 - the deterministic slot name;
@@ -160,7 +163,8 @@ Any name collision that does not meet all three conditions stops reconciliation
 instead of deleting the existing runner. Deterministic slot identity makes the
 non-atomic failure recoverable, but it does not remove the transaction boundary.
 Only one controller Deployment and identity set may own a given scope and
-runner-name prefix.
+runner-name prefix. Do not deploy controllers with overlapping allowlists and
+matching labels; they can race to claim the same waiting job.
 
 A Pod deletion or node disruption can interrupt an active job. The controller
 cleans up its old registration after Kubernetes returns. A Pod that remains
@@ -186,6 +190,8 @@ and explicit trust policy instead of a writable shared `/nix` volume.
 
 - The project is not an official Forgejo component.
 - The jobs API is polled rather than watched.
+- Exact repositories are polled in allowlist order; a sustained queue can favor
+  earlier entries under the global concurrency limit.
 - Concurrency has a fixed maximum of ten slots.
 - Controller leader election depends on Kubernetes API availability.
 - Controller replicas both possess the long-lived Forgejo API token.

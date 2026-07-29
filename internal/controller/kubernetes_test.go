@@ -108,17 +108,20 @@ func TestKubernetesGetPodReturnsCreationTimestamp(t *testing.T) {
 func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 	var received kubernetesSecret
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/secrets" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/secrets":
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Errorf("decode Secret: %v", err)
+			}
+			received.Metadata.UID = "credential-uid"
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && r.URL.Path == "/secrets/runner-credential-2":
+		default:
 			http.NotFound(w, r)
 			return
 		}
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
-			t.Errorf("decode Secret: %v", err)
-		}
-		received.Metadata.UID = "credential-uid"
-		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(received); err != nil {
-			t.Errorf("encode created Secret: %v", err)
+			t.Errorf("encode Secret: %v", err)
 		}
 	}))
 	defer server.Close()
@@ -133,7 +136,7 @@ func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 		runnerImage:    "runner:latest",
 	}
 	registration := Registration{ID: 42, UUID: "runner-uuid", Token: "runner-token"}
-	credentialUID, err := client.CreateCredential(context.Background(), 2, registration, "job-handle")
+	credentialUID, err := client.CreateCredential(context.Background(), 2, registration, testScope, "job-handle")
 	if err != nil {
 		t.Fatalf("CreateCredential() error = %v", err)
 	}
@@ -154,6 +157,44 @@ func TestKubernetesCredentialUsesSlotAndStoresHandle(t *testing.T) {
 	}
 	if received.Metadata.Labels[managedByLabel] != managedByValue || received.Metadata.Labels[slotLabel] != "2" {
 		t.Fatalf("credential ownership labels = %v", received.Metadata.Labels)
+	}
+	if received.Metadata.Annotations[runnerScopeAnnotation] != testScope {
+		t.Fatalf("runner scope annotation = %q", received.Metadata.Annotations[runnerScopeAnnotation])
+	}
+	state, err := client.GetCredential(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("GetCredential() error = %v", err)
+	}
+	if state.Scope != testScope || state.RunnerID != registration.ID || state.JobHandle != "job-handle" {
+		t.Fatalf("GetCredential() = %+v", state)
+	}
+
+}
+
+func TestCreateCredentialRejectsEmptyScopeAndHandle(t *testing.T) {
+	client := &KubernetesClient{
+		namespace:      "forgejo-runners",
+		runnerPodName:  "runner-job",
+		credentialName: "runner-credential",
+		runnerImage:    "runner:latest",
+	}
+	registration := Registration{ID: 42, UUID: "runner-uuid", Token: "runner-token"}
+
+	tests := map[string]struct {
+		scope  string
+		handle string
+		want   string
+	}{
+		"empty scope":  {scope: " ", handle: "job-handle", want: "runner scope is empty"},
+		"empty handle": {scope: testScope, handle: " ", want: "job handle is empty"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := client.CreateCredential(context.Background(), 0, registration, test.scope, test.handle)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("CreateCredential() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

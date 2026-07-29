@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -64,15 +65,20 @@ func TestForgejoClientLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &forgejoClient{httpClient: server.Client(), scopeURL: scopeURL, token: "api-token"}
+	client := &forgejoClient{
+		httpClient: server.Client(),
+		scopeURLs:  map[string]*url.URL{testScope: scopeURL},
+		scopes:     []string{testScope},
+		token:      "api-token",
+	}
 
 	jobs, err := client.ListJobs(context.Background(), []string{"linux-amd64:host", "nix"})
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
 	wantJobs := []RemoteJob{
-		{ID: 11, Attempt: 1, Handle: "waiting-handle", RunsOn: []string{"linux-amd64:host"}, Status: "waiting"},
-		{ID: 12, Attempt: 2, Handle: "running-handle", RunsOn: []string{"nix"}, Status: "running"},
+		{Scope: testScope, ID: 11, Attempt: 1, Handle: "waiting-handle", RunsOn: []string{"linux-amd64:host"}, Status: "waiting"},
+		{Scope: testScope, ID: 12, Attempt: 2, Handle: "running-handle", RunsOn: []string{"nix"}, Status: "running"},
 	}
 	if !reflect.DeepEqual(jobs, wantJobs) {
 		t.Fatalf("ListJobs() = %+v, want %+v", jobs, wantJobs)
@@ -85,7 +91,7 @@ func TestForgejoClientLifecycle(t *testing.T) {
 	if len(runners) != 1 || runners[0].ID != 7 {
 		t.Fatalf("ListRunners() = %+v", runners)
 	}
-	registration, err := client.RegisterRunner(context.Background(), "slot-0", managedDescription)
+	registration, err := client.RegisterRunner(context.Background(), testScope, "slot-0", managedDescription)
 	if err != nil {
 		t.Fatalf("RegisterRunner() error = %v", err)
 	}
@@ -93,11 +99,46 @@ func TestForgejoClientLifecycle(t *testing.T) {
 	if registration != wantRegistration {
 		t.Fatalf("RegisterRunner() = %+v, want %+v", registration, wantRegistration)
 	}
-	if err := client.DeleteRunner(context.Background(), 42); err != nil {
+	if err := client.DeleteRunner(context.Background(), testScope, 42); err != nil {
 		t.Fatalf("DeleteRunner() error = %v", err)
 	}
 	if !reflect.DeepEqual(methods, []string{http.MethodGet, http.MethodGet, http.MethodPost, http.MethodDelete}) {
 		t.Fatalf("methods = %v", methods)
+	}
+}
+
+func TestNewForgejoClientBuildsAllowlistedScopes(t *testing.T) {
+	tokenPath := t.TempDir() + "/token"
+	if err := os.WriteFile(tokenPath, []byte("one-token"), 0o600); err != nil {
+		t.Fatalf("write token: %v", err)
+	}
+	tests := []struct {
+		name      string
+		allowlist []string
+		wantPaths map[string]string
+	}{
+		{name: "repositories", allowlist: []string{"example/one", "example/two"}, wantPaths: map[string]string{"example/one": "/api/v1/repos/example/one/actions/runners", "example/two": "/api/v1/repos/example/two/actions/runners"}},
+		{name: "wildcard", allowlist: []string{"*"}, wantPaths: map[string]string{"*": "/api/v1/user/actions/runners"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			forgejo, err := NewForgejoClient(Config{
+				ForgejoURL: "https://forgejo.example.com", ForgejoAPITokenPath: tokenPath,
+				ForgejoRepositoryAllowlist: test.allowlist,
+			})
+			if err != nil {
+				t.Fatalf("NewForgejoClient() error = %v", err)
+			}
+			client, ok := forgejo.(*forgejoClient)
+			if !ok {
+				t.Fatalf("NewForgejoClient() type = %T", forgejo)
+			}
+			for scope, wantPath := range test.wantPaths {
+				if got := client.scopeURLs[scope].Path; got != wantPath {
+					t.Fatalf("scope %q path = %q, want %q", scope, got, wantPath)
+				}
+			}
+		})
 	}
 }
 
@@ -111,8 +152,13 @@ func TestDeleteRunnerAcceptsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &forgejoClient{httpClient: server.Client(), scopeURL: scopeURL, token: "token"}
-	if err := client.DeleteRunner(context.Background(), 99); err != nil {
+	client := &forgejoClient{
+		httpClient: server.Client(),
+		scopeURLs:  map[string]*url.URL{"*": scopeURL},
+		scopes:     []string{"*"},
+		token:      "token",
+	}
+	if err := client.DeleteRunner(context.Background(), "*", 99); err != nil {
 		t.Fatalf("DeleteRunner() error = %v", err)
 	}
 }

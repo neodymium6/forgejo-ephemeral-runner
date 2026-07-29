@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -35,7 +36,7 @@ var (
 
 type Config struct {
 	ForgejoURL                  string
-	ForgejoScope                string
+	ForgejoRepositoryAllowlist  []string
 	ForgejoAPITokenPath         string
 	ForgejoAllowInsecureHTTP    bool
 	KubernetesAllowInsecureHTTP bool
@@ -60,7 +61,6 @@ type Config struct {
 func ConfigFromEnvironment() (Config, error) {
 	cfg := Config{
 		ForgejoURL:                  strings.TrimSpace(os.Getenv("FORGEJO_INSTANCE_URL")),
-		ForgejoScope:                strings.TrimSpace(os.Getenv("FORGEJO_RUNNER_SCOPE")),
 		ForgejoAPITokenPath:         environmentOrDefault("FORGEJO_API_TOKEN_FILE", defaultAPITokenPath),
 		ForgejoAllowInsecureHTTP:    strings.EqualFold(strings.TrimSpace(os.Getenv("FORGEJO_INSECURE_ALLOW_HTTP")), "true"),
 		KubernetesAllowInsecureHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("KUBERNETES_INSECURE_ALLOW_HTTP")), "true"),
@@ -86,6 +86,12 @@ func ConfigFromEnvironment() (Config, error) {
 	}
 	cfg.RunnerLabels = runnerLabels
 
+	repositories, err := parseRepositoryAllowlist(os.Getenv("FORGEJO_REPOSITORY_ALLOWLIST"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ForgejoRepositoryAllowlist = repositories
+
 	if cfg.ForgejoURL == "" {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL is required")
 	}
@@ -104,9 +110,6 @@ func ConfigFromEnvironment() (Config, error) {
 	}
 	if parsedURL.Scheme != "https" && (parsedURL.Scheme != "http" || !cfg.ForgejoAllowInsecureHTTP) {
 		return Config{}, errors.New("FORGEJO_INSTANCE_URL must use HTTPS unless FORGEJO_INSECURE_ALLOW_HTTP=true")
-	}
-	if _, err := scopeAPIPath(cfg.ForgejoScope); err != nil {
-		return Config{}, err
 	}
 	if cfg.Namespace == "" {
 		return Config{}, errors.New("POD_NAMESPACE is required")
@@ -192,6 +195,42 @@ func ConfigFromEnvironment() (Config, error) {
 		return Config{}, fmt.Errorf("MAX_CONCURRENT must be between 1 and %d", maxSupportedConcurrent)
 	}
 	return cfg, nil
+}
+
+func parseRepositoryAllowlist(raw string) ([]string, error) {
+	if strings.ContainsRune(raw, '\x00') {
+		return nil, errors.New("FORGEJO_REPOSITORY_ALLOWLIST must not contain NUL characters")
+	}
+
+	var repositories []string
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(raw, "\n") {
+		repository := strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		if repository == "" {
+			continue
+		}
+		if strings.IndexFunc(repository, func(value rune) bool { return unicode.IsSpace(value) || unicode.IsControl(value) }) >= 0 {
+			return nil, fmt.Errorf("FORGEJO_REPOSITORY_ALLOWLIST entry %q contains whitespace or control characters", repository)
+		}
+		if repository == "*" {
+			if len(repositories) != 0 || strings.TrimSpace(raw) != "*" {
+				return nil, errors.New("FORGEJO_REPOSITORY_ALLOWLIST wildcard must be the only entry")
+			}
+			return []string{"*"}, nil
+		}
+		if _, err := scopeAPIPath("repository:" + repository); err != nil {
+			return nil, fmt.Errorf("invalid FORGEJO_REPOSITORY_ALLOWLIST entry %q: %w", repository, err)
+		}
+		if _, duplicate := seen[repository]; duplicate {
+			return nil, fmt.Errorf("FORGEJO_REPOSITORY_ALLOWLIST contains duplicate repository %q", repository)
+		}
+		seen[repository] = struct{}{}
+		repositories = append(repositories, repository)
+	}
+	if len(repositories) == 0 {
+		return nil, errors.New("FORGEJO_REPOSITORY_ALLOWLIST must contain at least one repository or *")
+	}
+	return repositories, nil
 }
 
 func parseRunnerLabels(raw string) ([]string, error) {

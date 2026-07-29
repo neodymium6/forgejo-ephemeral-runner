@@ -4,7 +4,8 @@ metadata:
   name: forgejo-runner-settings
 data:
   FORGEJO_INSTANCE_URL: https://forgejo.example.com
-  FORGEJO_RUNNER_SCOPE: repository:example/example
+  FORGEJO_REPOSITORY_ALLOWLIST: |
+    example/example
   FORGEJO_RUNNER_NAME: kubernetes-ephemeral
   FORGEJO_RUNNER_LABELS: linux-amd64:host
   RUNNER_IMAGE: forgejo-ephemeral-runner:0.2.0-dev

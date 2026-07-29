@@ -19,7 +19,8 @@ import (
 
 type forgejoClient struct {
 	httpClient *http.Client
-	scopeURL   *url.URL
+	scopeURLs  map[string]*url.URL
+	scopes     []string
 	token      string
 }
 
@@ -28,13 +29,6 @@ func NewForgejoClient(cfg Config) (Forgejo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse Forgejo URL: %w", err)
 	}
-	scopePath, err := scopeAPIPath(cfg.ForgejoScope)
-	if err != nil {
-		return nil, err
-	}
-	baseURL.Path = path.Join(baseURL.Path, scopePath)
-	baseURL.RawQuery = ""
-	baseURL.Fragment = ""
 
 	tokenBytes, err := os.ReadFile(cfg.ForgejoAPITokenPath)
 	if err != nil {
@@ -45,6 +39,26 @@ func NewForgejoClient(cfg Config) (Forgejo, error) {
 		return nil, errors.New("Forgejo API token is empty")
 	}
 
+	scopeURLs := make(map[string]*url.URL, len(cfg.ForgejoRepositoryAllowlist))
+	for _, repository := range cfg.ForgejoRepositoryAllowlist {
+		scope := "repository:" + repository
+		if repository == "*" {
+			scope = "user"
+		}
+		scopePath, err := scopeAPIPath(scope)
+		if err != nil {
+			return nil, err
+		}
+		scopeURL := *baseURL
+		scopeURL.Path = path.Join(scopeURL.Path, scopePath)
+		scopeURL.RawQuery = ""
+		scopeURL.Fragment = ""
+		scopeURLs[repository] = &scopeURL
+	}
+	if len(scopeURLs) == 0 {
+		return nil, errors.New("Forgejo repository allowlist is empty")
+	}
+
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &forgejoClient{
@@ -53,9 +67,18 @@ func NewForgejoClient(cfg Config) (Forgejo, error) {
 			Timeout:       15 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		scopeURL: baseURL,
-		token:    token,
+		scopeURLs: scopeURLs,
+		scopes:    append([]string(nil), cfg.ForgejoRepositoryAllowlist...),
+		token:     token,
 	}, nil
+}
+
+func (c *forgejoClient) scopeURL(scope string) (*url.URL, error) {
+	scopeURL, ok := c.scopeURLs[scope]
+	if !ok {
+		return nil, fmt.Errorf("Forgejo scope %q is not in the repository allowlist", scope)
+	}
+	return scopeURL, nil
 }
 
 func scopeAPIPath(scope string) (string, error) {
@@ -68,7 +91,7 @@ func scopeAPIPath(scope string) (string, error) {
 
 	kind, value, found := strings.Cut(scope, ":")
 	if !found || strings.TrimSpace(value) == "" {
-		return "", errors.New("FORGEJO_RUNNER_SCOPE must be user, instance, organization:<name>, or repository:<owner>/<repo>")
+		return "", errors.New("runner scope must be user, instance, organization:<name>, or repository:<owner>/<repo>")
 	}
 	switch kind {
 	case "organization":
@@ -98,7 +121,26 @@ func isDotPathSegment(value string) bool {
 }
 
 func (c *forgejoClient) ListJobs(ctx context.Context, labels []string) ([]RemoteJob, error) {
-	requestURL := *c.scopeURL
+	var jobs []RemoteJob
+	for _, scope := range c.scopes {
+		scopedJobs, err := c.listJobs(ctx, scope, labels)
+		if err != nil {
+			return nil, fmt.Errorf("list jobs for scope %q: %w", scope, err)
+		}
+		for index := range scopedJobs {
+			scopedJobs[index].Scope = scope
+		}
+		jobs = append(jobs, scopedJobs...)
+	}
+	return jobs, nil
+}
+
+func (c *forgejoClient) listJobs(ctx context.Context, scope string, labels []string) ([]RemoteJob, error) {
+	scopeURL, err := c.scopeURL(scope)
+	if err != nil {
+		return nil, err
+	}
+	requestURL := *scopeURL
 	requestURL.Path = strings.TrimSuffix(requestURL.Path, "/") + "/jobs"
 	if len(labels) > 0 {
 		query := requestURL.Query()
@@ -128,10 +170,29 @@ func (c *forgejoClient) ListJobs(ctx context.Context, labels []string) ([]Remote
 }
 
 func (c *forgejoClient) ListRunners(ctx context.Context) ([]RemoteRunner, error) {
+	var runners []RemoteRunner
+	for _, scope := range c.scopes {
+		scopedRunners, err := c.listRunners(ctx, scope)
+		if err != nil {
+			return nil, fmt.Errorf("list runners for scope %q: %w", scope, err)
+		}
+		for index := range scopedRunners {
+			scopedRunners[index].Scope = scope
+		}
+		runners = append(runners, scopedRunners...)
+	}
+	return runners, nil
+}
+
+func (c *forgejoClient) listRunners(ctx context.Context, scope string) ([]RemoteRunner, error) {
+	scopeURL, err := c.scopeURL(scope)
+	if err != nil {
+		return nil, err
+	}
 	const pageSize = 50
 	var runners []RemoteRunner
 	for pageNumber := 1; ; pageNumber++ {
-		requestURL := *c.scopeURL
+		requestURL := *scopeURL
 		query := requestURL.Query()
 		query.Set("visible", "false")
 		query.Set("limit", strconv.Itoa(pageSize))
@@ -171,7 +232,11 @@ func (c *forgejoClient) ListRunners(ctx context.Context) ([]RemoteRunner, error)
 	}
 }
 
-func (c *forgejoClient) RegisterRunner(ctx context.Context, name, description string) (Registration, error) {
+func (c *forgejoClient) RegisterRunner(ctx context.Context, scope, name, description string) (Registration, error) {
+	scopeURL, err := c.scopeURL(scope)
+	if err != nil {
+		return Registration{}, err
+	}
 	body, err := json.Marshal(struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -181,7 +246,7 @@ func (c *forgejoClient) RegisterRunner(ctx context.Context, name, description st
 		return Registration{}, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.scopeURL.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, scopeURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return Registration{}, err
 	}
@@ -206,8 +271,12 @@ func (c *forgejoClient) RegisterRunner(ctx context.Context, name, description st
 	return registration, nil
 }
 
-func (c *forgejoClient) DeleteRunner(ctx context.Context, id int64) error {
-	requestURL := *c.scopeURL
+func (c *forgejoClient) DeleteRunner(ctx context.Context, scope string, id int64) error {
+	scopeURL, err := c.scopeURL(scope)
+	if err != nil {
+		return err
+	}
+	requestURL := *scopeURL
 	requestURL.Path = strings.TrimSuffix(requestURL.Path, "/") + "/" + strconv.FormatInt(id, 10)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, requestURL.String(), nil)
 	if err != nil {

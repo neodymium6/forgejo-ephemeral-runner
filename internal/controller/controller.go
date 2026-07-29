@@ -22,6 +22,7 @@ type Registration struct {
 }
 
 type RemoteRunner struct {
+	Scope       string `json:"-"`
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -29,6 +30,7 @@ type RemoteRunner struct {
 }
 
 type RemoteJob struct {
+	Scope   string   `json:"-"`
 	ID      int64    `json:"id"`
 	Attempt int64    `json:"attempt"`
 	Handle  string   `json:"handle"`
@@ -47,6 +49,7 @@ type PodState struct {
 type CredentialState struct {
 	Exists    bool
 	UID       string
+	Scope     string
 	RunnerID  int64
 	JobHandle string
 }
@@ -54,8 +57,8 @@ type CredentialState struct {
 type Forgejo interface {
 	ListJobs(context.Context, []string) ([]RemoteJob, error)
 	ListRunners(context.Context) ([]RemoteRunner, error)
-	RegisterRunner(context.Context, string, string) (Registration, error)
-	DeleteRunner(context.Context, int64) error
+	RegisterRunner(context.Context, string, string, string) (Registration, error)
+	DeleteRunner(context.Context, string, int64) error
 }
 
 type Kubernetes interface {
@@ -63,8 +66,23 @@ type Kubernetes interface {
 	CreatePod(context.Context, int) error
 	DeletePod(context.Context, int, string) error
 	GetCredential(context.Context, int) (CredentialState, error)
-	CreateCredential(context.Context, int, Registration, string) (string, error)
+	CreateCredential(context.Context, int, Registration, string, string) (string, error)
 	DeleteCredential(context.Context, int, string) error
+}
+
+type scopedRunnerID struct {
+	Scope string
+	ID    int64
+}
+
+type scopedRunnerName struct {
+	Scope string
+	Name  string
+}
+
+type scopedJobHandle struct {
+	Scope  string
+	Handle string
 }
 
 func Run(
@@ -116,8 +134,8 @@ func Reconcile(
 		credential CredentialState
 	}
 	slots := make([]localSlot, cfg.MaxConcurrent)
-	activeHandles := make(map[string]struct{}, cfg.MaxConcurrent)
-	referencedRunners := make(map[int64]struct{}, cfg.MaxConcurrent)
+	activeHandles := make(map[scopedJobHandle]struct{}, cfg.MaxConcurrent)
+	referencedRunners := make(map[scopedRunnerID]struct{}, cfg.MaxConcurrent)
 	activeCount := 0
 
 	for slot := range cfg.MaxConcurrent {
@@ -129,6 +147,9 @@ func Reconcile(
 		if err != nil {
 			return fmt.Errorf("get runner credential for slot %d: %w", slot, err)
 		}
+		if credential.Exists && !repositoryScopeAllowed(cfg.ForgejoRepositoryAllowlist, credential.Scope) {
+			return fmt.Errorf("runner credential in slot %d uses scope %q outside the current repository allowlist", slot, credential.Scope)
+		}
 		slots[slot] = localSlot{pod: pod, credential: credential}
 
 		if pod.Exists {
@@ -138,8 +159,8 @@ func Reconcile(
 			}
 			if pod.Deleting {
 				activeCount++
-				activeHandles[credential.JobHandle] = struct{}{}
-				referencedRunners[credential.RunnerID] = struct{}{}
+				activeHandles[scopedJobHandle{Scope: credential.Scope, Handle: credential.JobHandle}] = struct{}{}
+				referencedRunners[scopedRunnerID{Scope: credential.Scope, ID: credential.RunnerID}] = struct{}{}
 				continue
 			}
 			if timeout, expired := stalledPodTimeout(pod, cfg, now); expired {
@@ -152,8 +173,8 @@ func Reconcile(
 				return kubernetes.DeletePod(ctx, slot, pod.UID)
 			default:
 				activeCount++
-				activeHandles[credential.JobHandle] = struct{}{}
-				referencedRunners[credential.RunnerID] = struct{}{}
+				activeHandles[scopedJobHandle{Scope: credential.Scope, Handle: credential.JobHandle}] = struct{}{}
+				referencedRunners[scopedRunnerID{Scope: credential.Scope, ID: credential.RunnerID}] = struct{}{}
 			}
 			continue
 		}
@@ -163,14 +184,14 @@ func Reconcile(
 			if err != nil {
 				return fmt.Errorf("list Forgejo runners before credential cleanup: %w", err)
 			}
-			present, err := validateManagedRunnerByID(remoteRunners, credential.RunnerID, runnerNameForSlot(cfg, slot))
+			present, err := validateManagedRunnerByID(remoteRunners, credential.Scope, credential.RunnerID, runnerNameForSlot(cfg, slot))
 			if err != nil {
 				return err
 			}
 			if present {
-				logger.Printf("removing Forgejo runner registration %d from slot %d", credential.RunnerID, slot)
-				if err := forgejo.DeleteRunner(ctx, credential.RunnerID); err != nil {
-					return fmt.Errorf("delete Forgejo runner %d: %w", credential.RunnerID, err)
+				logger.Printf("removing Forgejo runner registration %d from scope %q slot %d", credential.RunnerID, credential.Scope, slot)
+				if err := forgejo.DeleteRunner(ctx, credential.Scope, credential.RunnerID); err != nil {
+					return fmt.Errorf("delete Forgejo runner %d from scope %q: %w", credential.RunnerID, credential.Scope, err)
 				}
 			}
 			logger.Printf("deleting consumed runner credential in slot %d", slot)
@@ -182,17 +203,24 @@ func Reconcile(
 	if err != nil {
 		return fmt.Errorf("list Forgejo runners: %w", err)
 	}
-	remoteByName := make(map[string][]RemoteRunner)
+	remoteByName := make(map[scopedRunnerName][]RemoteRunner)
 	managedNames := make(map[string]struct{}, cfg.MaxConcurrent)
 	for slot := range cfg.MaxConcurrent {
 		managedNames[runnerNameForSlot(cfg, slot)] = struct{}{}
 	}
 	for _, runner := range remoteRunners {
+		if runner.Scope == "" {
+			return errors.New("Forgejo returned a runner without a scope")
+		}
+		if !repositoryScopeAllowed(cfg.ForgejoRepositoryAllowlist, runner.Scope) {
+			return fmt.Errorf("Forgejo returned runner scope %q outside the current repository allowlist", runner.Scope)
+		}
 		if _, managedName := managedNames[runner.Name]; !managedName {
 			continue
 		}
-		remoteByName[runner.Name] = append(remoteByName[runner.Name], runner)
-		if _, referenced := referencedRunners[runner.ID]; referenced {
+		key := scopedRunnerName{Scope: runner.Scope, Name: runner.Name}
+		remoteByName[key] = append(remoteByName[key], runner)
+		if _, referenced := referencedRunners[scopedRunnerID{Scope: runner.Scope, ID: runner.ID}]; referenced {
 			continue
 		}
 		if runner.Description != managedDescription || !runner.Ephemeral {
@@ -201,9 +229,9 @@ func Reconcile(
 		if runner.ID <= 0 {
 			return fmt.Errorf("managed runner %q has an invalid ID", runner.Name)
 		}
-		logger.Printf("removing stale Forgejo runner registration %d", runner.ID)
-		if err := forgejo.DeleteRunner(ctx, runner.ID); err != nil {
-			return fmt.Errorf("delete stale Forgejo runner %d: %w", runner.ID, err)
+		logger.Printf("removing stale Forgejo runner registration %d from scope %q", runner.ID, runner.Scope)
+		if err := forgejo.DeleteRunner(ctx, runner.Scope, runner.ID); err != nil {
+			return fmt.Errorf("delete stale Forgejo runner %d from scope %q: %w", runner.ID, runner.Scope, err)
 		}
 		return nil
 	}
@@ -221,13 +249,17 @@ func Reconcile(
 		if job.Status != "waiting" {
 			continue
 		}
-		if job.ID <= 0 || job.Attempt < 0 || job.Handle == "" {
+		if job.Scope == "" || job.ID <= 0 || job.Attempt < 0 || job.Handle == "" {
 			return errors.New("Forgejo returned an incomplete waiting job")
 		}
-		if _, active := activeHandles[job.Handle]; active {
+		key := scopedJobHandle{Scope: job.Scope, Handle: job.Handle}
+		if !repositoryScopeAllowed(cfg.ForgejoRepositoryAllowlist, job.Scope) {
+			return fmt.Errorf("Forgejo returned job scope %q outside the current repository allowlist", job.Scope)
+		}
+		if _, active := activeHandles[key]; active {
 			continue
 		}
-		activeHandles[job.Handle] = struct{}{}
+		activeHandles[key] = struct{}{}
 		waiting = append(waiting, job)
 	}
 
@@ -240,33 +272,34 @@ func Reconcile(
 			continue
 		}
 
-		name := runnerNameForSlot(cfg, slot)
-		for _, runner := range remoteByName[name] {
-			if _, referenced := referencedRunners[runner.ID]; referenced {
-				continue
-			}
-			return fmt.Errorf("runner name %q is already used by an unmanaged or non-ephemeral runner", name)
-		}
-
 		job := waiting[jobIndex]
 		jobIndex++
-		registration, err := forgejo.RegisterRunner(ctx, name, managedDescription)
-		if err != nil {
-			return fmt.Errorf("register ephemeral Forgejo runner for slot %d: %w", slot, err)
+		name := runnerNameForSlot(cfg, slot)
+		nameKey := scopedRunnerName{Scope: job.Scope, Name: name}
+		for _, runner := range remoteByName[nameKey] {
+			if _, referenced := referencedRunners[scopedRunnerID{Scope: runner.Scope, ID: runner.ID}]; referenced {
+				continue
+			}
+			return fmt.Errorf("runner name %q is already used in scope %q by an unmanaged or non-ephemeral runner", name, job.Scope)
 		}
-		logger.Printf("created ephemeral Forgejo runner registration %d for slot %d", registration.ID, slot)
 
-		credentialUID, err := kubernetes.CreateCredential(ctx, slot, registration, job.Handle)
+		registration, err := forgejo.RegisterRunner(ctx, job.Scope, name, managedDescription)
 		if err != nil {
-			cleanupErr := forgejo.DeleteRunner(ctx, registration.ID)
+			return fmt.Errorf("register ephemeral Forgejo runner for scope %q slot %d: %w", job.Scope, slot, err)
+		}
+		logger.Printf("created ephemeral Forgejo runner registration %d for scope %q slot %d", registration.ID, job.Scope, slot)
+
+		credentialUID, err := kubernetes.CreateCredential(ctx, slot, registration, job.Scope, job.Handle)
+		if err != nil {
+			cleanupErr := forgejo.DeleteRunner(ctx, job.Scope, registration.ID)
 			return errors.Join(fmt.Errorf("create runner credential for slot %d: %w", slot, err), cleanupErr)
 		}
 		if err := kubernetes.CreatePod(ctx, slot); err != nil {
 			credentialErr := kubernetes.DeleteCredential(ctx, slot, credentialUID)
-			registrationErr := forgejo.DeleteRunner(ctx, registration.ID)
+			registrationErr := forgejo.DeleteRunner(ctx, job.Scope, registration.ID)
 			return errors.Join(fmt.Errorf("create runner pod for slot %d: %w", slot, err), credentialErr, registrationErr)
 		}
-		logger.Printf("created runner pod in slot %d for Forgejo job %d attempt %d", slot, job.ID, job.Attempt)
+		logger.Printf("created runner pod in slot %d for Forgejo scope %q job %d attempt %d", slot, job.Scope, job.ID, job.Attempt)
 		activeCount++
 	}
 	return nil
@@ -288,13 +321,13 @@ func stalledPodTimeout(pod PodState, cfg Config, now time.Time) (time.Duration, 
 	return timeout, now.Sub(pod.CreatedAt) >= timeout
 }
 
-func validateManagedRunnerByID(runners []RemoteRunner, id int64, expectedName string) (bool, error) {
+func validateManagedRunnerByID(runners []RemoteRunner, scope string, id int64, expectedName string) (bool, error) {
 	for _, runner := range runners {
-		if runner.ID != id {
+		if runner.Scope != scope || runner.ID != id {
 			continue
 		}
 		if runner.Name != expectedName || runner.Description != managedDescription || !runner.Ephemeral {
-			return false, fmt.Errorf("Forgejo runner %d does not match managed slot %q", id, expectedName)
+			return false, fmt.Errorf("Forgejo runner %d in scope %q does not match managed slot %q", id, scope, expectedName)
 		}
 		return true, nil
 	}
@@ -303,4 +336,13 @@ func validateManagedRunnerByID(runners []RemoteRunner, id int64, expectedName st
 
 func runnerNameForSlot(cfg Config, slot int) string {
 	return fmt.Sprintf("%s-%d", cfg.RunnerName, slot)
+}
+
+func repositoryScopeAllowed(allowlist []string, scope string) bool {
+	for _, allowed := range allowlist {
+		if scope == allowed {
+			return true
+		}
+	}
+	return false
 }

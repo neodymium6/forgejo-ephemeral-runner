@@ -13,11 +13,11 @@ and supports a configurable concurrency limit.
 ```text
 two-replica controller Deployment
   -> competes for a Kubernetes Lease; only the holder reconciles
-  -> lists matching waiting jobs at the configured Forgejo scope
+  -> lists label-matching waiting jobs in the allowed repositories
   -> keeps zero runner Pods when no job is waiting
   -> assigns free fixed slots up to MAX_CONCURRENT
-  -> creates one ephemeral Forgejo runner for the selected job
-  -> stores its UUID, one-job token, and target handle in a temporary Secret
+  -> creates one ephemeral Forgejo runner in the selected repository scope
+  -> stores its scope, UUID, one-job token, and target handle in a temporary Secret
   -> creates one unprivileged runner Pod
   -> runs exactly the selected job with one-job --handle
   -> removes the Pod, Forgejo registration, and temporary Secret
@@ -119,47 +119,65 @@ overlay must:
 
 1. replace both development image references with immutable registry digests;
 2. replace `https://forgejo.example.com` with the intended Forgejo URL;
-3. select a runner scope;
+3. set an explicit repository allowlist or the explicit `*` wildcard;
 4. set a deterministic runner name and required runner labels;
 5. set `MAX_CONCURRENT` from `1` through `10`;
 6. review `RUNNER_STARTUP_TIMEOUT` and `RUNNER_UNKNOWN_TIMEOUT`;
 7. provide a Secret named `forgejo-runner-controller` with an `api-token` key;
 8. review resource limits and network access for the target cluster.
 
-Supported scope values are:
+The allowlist is a newline-delimited string. YAML's `|` block scalar keeps the
+lines in one ConfigMap value:
 
-```text
-user
-instance
-organization:<name>
-repository:<owner>/<repository>
+```yaml
+FORGEJO_REPOSITORY_ALLOWLIST: |
+  example/first
+  example/second
 ```
 
-The token account must be allowed to list jobs and create, list, and delete
-runners at the selected scope. Forgejo 15 exposes route-level token scopes, not
-a runner-only permission:
+Each exact entry uses a repository-scoped runner endpoint. One API token is
+shared by the controller across every allowed repository and normally needs
+`write:repository`. The repository owner and token restrictions remain an
+independent upper bound if the controller is compromised.
 
-| Runner scope | Required route-level token scope |
-| --- | --- |
-| `user` | `write:user` |
-| `organization:<name>` | `write:organization` |
-| `repository:<owner>/<repository>` | `write:repository` |
-| `instance` | `write:admin` |
+For trusted personal installations, an operator may instead opt in to every
+repository eligible for the token's user runner scope:
+
+```yaml
+FORGEJO_REPOSITORY_ALLOWLIST: "*"
+```
+
+The wildcard must be the only entry, uses Forgejo's user-scoped runner
+endpoint, and requires `write:user`. It is not merely a glob over the explicit
+list. In both modes, a job must also request one of `FORGEJO_RUNNER_LABELS`
+through the standard workflow `runs-on` field. Labels select a runner; the
+explicit list is the authorization policy. With `*`, the label intentionally
+becomes the practical repository opt-in.
+
+`FORGEJO_REPOSITORY_ALLOWLIST` replaces `FORGEJO_RUNNER_SCOPE`. Before upgrading
+an existing deployment, wait for all runner Pods and temporary credentials to
+drain; older temporary Secrets do not contain the scope metadata required by
+the new cleanup path.
+
 
 Account ownership or administration checks still apply in addition to the
-token scope. Prefer a dedicated account when Forgejo permits it for the
-selected scope. On Forgejo 15, repository-scoped runner APIs for a personal
-repository require the repository owner; an administrative collaborator is
-insufficient. Such a repository therefore needs an owner-issued
-`write:repository` token. Moving the repository to an organization is the
-practical path to separating the runner identity from a personal owner. See
-the security document before choosing an account and token type.
+token scope. Prefer a dedicated account when Forgejo permits it. On Forgejo 15,
+repository-scoped runner APIs for a personal repository require the repository
+owner; an administrative collaborator is insufficient. Such a repository
+therefore needs an owner-issued `write:repository` token. Moving the repository
+to an organization is the practical path to separating the runner identity
+from a personal owner. See the security document before choosing an account
+and token type.
 
 The base reserves ten deterministic Pod, Secret, and runner names so that
 read/delete RBAC can remain name-restricted. If their base names or the Lease
 name change, update the corresponding `resourceNames` in the Role in the same
 overlay. Do not lower `MAX_CONCURRENT` while a higher-numbered slot is active;
 wait for those jobs and their cleanup to finish first.
+
+Likewise, wait until all runner Pods and temporary credentials have drained
+before removing an allowlist entry or switching between exact entries and `*`.
+The controller fails closed rather than discarding state for a removed scope.
 
 Do not commit the plaintext API token. Use the secret-management system of the
 private deployment repository. The public base intentionally contains no
@@ -182,8 +200,9 @@ operator test and is not a release gate.
 
 Creating a Forgejo runner and recording its ID in Kubernetes cannot be one
 atomic transaction. On restart, the active controller lists runners at its
-exact scope and safely removes only ephemeral registrations bearing its
-deterministic managed identity. Unit tests exercise this recovery path, and a
+configured allowlist scopes and safely removes only ephemeral registrations
+bearing its deterministic managed identity. Unit tests exercise this recovery
+path, and a
 successful local run of the disposable Forgejo E2E harness exercised the
 corresponding failure-injection scenario.
 

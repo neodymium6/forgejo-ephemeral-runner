@@ -10,7 +10,7 @@ import (
 func setValidConfigEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("FORGEJO_INSTANCE_URL", "https://forgejo.example.com")
-	t.Setenv("FORGEJO_RUNNER_SCOPE", "repository:example/project")
+	t.Setenv("FORGEJO_REPOSITORY_ALLOWLIST", "example/project")
 	t.Setenv("POD_NAMESPACE", "forgejo-runners")
 	t.Setenv("FORGEJO_RUNNER_NAME", "kubernetes-ephemeral")
 	t.Setenv("POD_NAME", "controller-0")
@@ -43,6 +43,54 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	}
 	if want := []string{"linux-amd64", "nix"}; !reflect.DeepEqual(cfg.RunnerLabels, want) {
 		t.Fatalf("RunnerLabels = %v, want %v", cfg.RunnerLabels, want)
+	}
+	if want := []string{"example/project"}; !reflect.DeepEqual(cfg.ForgejoRepositoryAllowlist, want) {
+		t.Fatalf("ForgejoRepositoryAllowlist = %v, want %v", cfg.ForgejoRepositoryAllowlist, want)
+	}
+}
+
+func TestParseRepositoryAllowlist(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "multiple repositories", raw: "example/one\r\nexample/two\n", want: []string{"example/one", "example/two"}},
+		{name: "wildcard", raw: "  *\n", want: []string{"*"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseRepositoryAllowlist(test.raw)
+			if err != nil {
+				t.Fatalf("parseRepositoryAllowlist() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("parseRepositoryAllowlist() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParseRepositoryAllowlistRejectsMalformedInput(t *testing.T) {
+	for _, value := range []string{
+		"",
+		"example",
+		"a/b/c",
+		"./repo",
+		"../repo",
+		"owner/.",
+		"owner/..",
+		"example /project",
+		"example/project\nexample/project",
+		"*\nexample/project",
+		"example/project\n*",
+		"\x00",
+	} {
+		t.Run(fmt.Sprintf("%q", value), func(t *testing.T) {
+			if _, err := parseRepositoryAllowlist(value); err == nil {
+				t.Fatalf("parseRepositoryAllowlist(%q) succeeded", value)
+			}
+		})
 	}
 }
 

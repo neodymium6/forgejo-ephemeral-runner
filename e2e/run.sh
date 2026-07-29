@@ -13,6 +13,7 @@ proxy_port=""
 proxy_url=""
 api_user="e2e-admin"
 repository="e2e-repository"
+secondary_repository="e2e-repository-secondary"
 port_forward_pid=""
 e2e_completed=false
 
@@ -96,8 +97,9 @@ e2e_local_runner_state_absent() {
 
 e2e_managed_runner_count_is() {
   local expected="$1"
+  local repository_name="${2:-${repository}}"
   local response
-  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runners?visible=false")" ||
+  response="$(e2e_api "/api/v1/repos/${api_user}/${repository_name}/actions/runners?visible=false")" ||
     return
   jq -e \
     --argjson expected "${expected}" \
@@ -118,8 +120,9 @@ e2e_proxy_control() {
 
 e2e_successful_run_count_at_least() {
   local expected="$1"
+  local repository_name="${2:-${repository}}"
   local response
-  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runs?limit=10")" || return
+  response="$(e2e_api "/api/v1/repos/${api_user}/${repository_name}/actions/runs?limit=10")" || return
   local successful
   successful="$(jq '
     [
@@ -134,7 +137,8 @@ e2e_successful_run_count_at_least() {
 }
 
 e2e_dispatch_workflow() {
-  e2e_api "/api/v1/repos/${api_user}/${repository}/actions/workflows/e2e.yaml/dispatches" \
+  local repository_name="${1:-${repository}}"
+  e2e_api "/api/v1/repos/${api_user}/${repository_name}/actions/workflows/e2e.yaml/dispatches" \
     --request POST \
     --data-binary '{"ref":"main"}' \
     >/dev/null
@@ -154,6 +158,15 @@ e2e_lease_holder_changed() {
   [[ -n "${current}" && "${current}" != "${previous}" ]]
 }
 
+e2e_repository_runners_cleaned() {
+  local repository_name="$1"
+  local response
+  response="$(e2e_api "/api/v1/repos/${api_user}/${repository_name}/actions/runners?visible=false")" ||
+    return
+  jq -e '[.[] | select(.name | startswith("e2e-ephemeral-"))] | length == 0' \
+    <<<"${response}" >/dev/null
+}
+
 e2e_resources_cleaned() {
   [[ "$(e2e_runner_pod_count)" == 0 ]] || return
   [[ "$(e2e_kubectl get secrets \
@@ -161,11 +174,8 @@ e2e_resources_cleaned() {
     --selector app.kubernetes.io/managed-by=forgejo-ephemeral-runner \
     --output name | wc -l | tr -d '[:space:]')" == 0 ]] || return
 
-  local response
-  response="$(e2e_api "/api/v1/repos/${api_user}/${repository}/actions/runners?visible=false")" ||
-    return
-  jq -e '[.[] | select(.name | startswith("e2e-ephemeral-"))] | length == 0' \
-    <<<"${response}" >/dev/null
+  e2e_repository_runners_cleaned "${repository}" || return
+  e2e_repository_runners_cleaned "${secondary_repository}"
 }
 
 case "${forgejo_port}" in
@@ -257,11 +267,13 @@ printf '%s\n' \
   "header = \"Authorization: token ${api_token}\"" >"${e2e_curl_config}"
 unset api_token admin_password
 
-e2e_api '/api/v1/user/repos' \
-  --request POST \
-  --data-binary \
-  "{\"name\":\"${repository}\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\"}" \
-  >/dev/null
+for repository_name in "${repository}" "${secondary_repository}"; do
+  e2e_api '/api/v1/user/repos' \
+    --request POST \
+    --data-binary \
+    "{\"name\":\"${repository_name}\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\"}" \
+    >/dev/null
+done
 
 workflow_content="$(base64 \
   "${script_dir}/fixtures/repository/.forgejo/workflows/e2e.yaml" | tr -d '\n')"
@@ -270,10 +282,12 @@ jq --null-input \
   '{content: $content, message: "Add E2E workflow"}' \
   >"${e2e_state_dir}/workflow-request.json"
 unset workflow_content
-e2e_api "/api/v1/repos/${api_user}/${repository}/contents/.forgejo/workflows/e2e.yaml" \
-  --request POST \
-  --data-binary "@${e2e_state_dir}/workflow-request.json" \
-  >/dev/null
+for repository_name in "${repository}" "${secondary_repository}"; do
+  e2e_api "/api/v1/repos/${api_user}/${repository_name}/contents/.forgejo/workflows/e2e.yaml" \
+    --request POST \
+    --data-binary "@${e2e_state_dir}/workflow-request.json" \
+    >/dev/null
+done
 
 printf '%s\n' 'Building and loading controller and runner images.'
 nix build .#e2e-runner-image --out-link "${e2e_state_dir}/runner-image"
@@ -309,14 +323,15 @@ e2e_wait_for 'runner Pod, credential, and registration cleanup' 120 e2e_resource
 
 printf '%s\n' 'E2E smoke lifecycle succeeded.'
 
-printf '%s\n' 'Dispatching two concurrent workflows.'
+printf '%s\n' 'Dispatching concurrent workflows in both allowed repositories.'
 e2e_dispatch_workflow
-e2e_dispatch_workflow
+e2e_dispatch_workflow "${secondary_repository}"
 e2e_wait_for 'two concurrent runner Pods' 120 e2e_runner_pod_count_is 2
-e2e_wait_for 'three successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 3
+e2e_wait_for 'two successful primary repository runs' 240 e2e_successful_run_count_at_least 2
+e2e_wait_for 'one successful secondary repository run' 240 e2e_successful_run_count_at_least 1 "${secondary_repository}"
 e2e_wait_for 'concurrent runner cleanup' 120 e2e_resources_cleaned
 
-printf '%s\n' 'E2E concurrency lifecycle succeeded.'
+printf '%s\n' 'E2E multi-repository concurrency lifecycle succeeded.'
 
 printf '%s\n' 'Injecting a crash at the remote-registration/local-state boundary.'
 e2e_proxy_control arm
@@ -343,8 +358,8 @@ e2e_kubectl rollout status \
   --namespace "${runner_namespace}" \
   deployment/forgejo-ephemeral-runner-controller \
   --timeout 120s
-e2e_wait_for 'four successful Forgejo Actions runs' 240 \
-  e2e_successful_run_count_at_least 4
+e2e_wait_for 'three successful primary repository runs' 240 \
+  e2e_successful_run_count_at_least 3
 e2e_wait_for 'registration-boundary recovery cleanup' 120 e2e_resources_cleaned
 
 printf '%s\n' 'E2E registration-boundary recovery succeeded.'
@@ -362,7 +377,7 @@ e2e_kubectl delete pod \
 e2e_dispatch_workflow
 e2e_wait_for 'a different leader Lease holder' 60 e2e_lease_holder_changed "${previous_leader}"
 e2e_wait_for 'one runner Pod after leader failover' 120 e2e_runner_pod_present
-e2e_wait_for 'five successful Forgejo Actions runs' 240 e2e_successful_run_count_at_least 5
+e2e_wait_for 'four successful primary repository runs' 240 e2e_successful_run_count_at_least 4
 e2e_wait_for 'post-failover runner cleanup' 120 e2e_resources_cleaned
 e2e_kubectl rollout status \
   --namespace "${runner_namespace}" \

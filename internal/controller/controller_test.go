@@ -10,34 +10,52 @@ import (
 	"time"
 )
 
+const testScope = "example/project"
+
 type fakeForgejo struct {
-	jobs            []RemoteJob
-	runners         []RemoteRunner
-	registration    Registration
-	listCalls       int
-	registerCalls   int
-	registeredNames []string
-	deleted         []int64
-	registerErr     error
-	deleteErr       error
+	jobs             []RemoteJob
+	runners          []RemoteRunner
+	registration     Registration
+	listCalls        int
+	registerCalls    int
+	registeredNames  []string
+	registeredScopes []string
+	deleted          []int64
+	deletedScopes    []string
+	registerErr      error
+	deleteErr        error
 }
 
 func (f *fakeForgejo) ListJobs(context.Context, []string) ([]RemoteJob, error) {
-	return f.jobs, nil
+	jobs := append([]RemoteJob(nil), f.jobs...)
+	for index := range jobs {
+		if jobs[index].Scope == "" {
+			jobs[index].Scope = testScope
+		}
+	}
+	return jobs, nil
 }
 
 func (f *fakeForgejo) ListRunners(context.Context) ([]RemoteRunner, error) {
 	f.listCalls++
-	return f.runners, nil
+	runners := append([]RemoteRunner(nil), f.runners...)
+	for index := range runners {
+		if runners[index].Scope == "" {
+			runners[index].Scope = testScope
+		}
+	}
+	return runners, nil
 }
 
-func (f *fakeForgejo) RegisterRunner(_ context.Context, name, _ string) (Registration, error) {
+func (f *fakeForgejo) RegisterRunner(_ context.Context, scope, name, _ string) (Registration, error) {
 	f.registerCalls++
+	f.registeredScopes = append(f.registeredScopes, scope)
 	f.registeredNames = append(f.registeredNames, name)
 	return f.registration, f.registerErr
 }
 
-func (f *fakeForgejo) DeleteRunner(_ context.Context, id int64) error {
+func (f *fakeForgejo) DeleteRunner(_ context.Context, scope string, id int64) error {
+	f.deletedScopes = append(f.deletedScopes, scope)
 	f.deleted = append(f.deleted, id)
 	return f.deleteErr
 }
@@ -54,6 +72,7 @@ type fakeKubernetes struct {
 	createPodErr          error
 	createCredentialErr   error
 	credentialHandles     []string
+	credentialScopes      []string
 }
 
 func (f *fakeKubernetes) GetPod(context.Context, int) (PodState, error) {
@@ -72,11 +91,16 @@ func (f *fakeKubernetes) DeletePod(_ context.Context, _ int, uid string) error {
 }
 
 func (f *fakeKubernetes) GetCredential(context.Context, int) (CredentialState, error) {
-	return f.credential, nil
+	credential := f.credential
+	if credential.Exists && credential.Scope == "" {
+		credential.Scope = testScope
+	}
+	return credential, nil
 }
 
-func (f *fakeKubernetes) CreateCredential(_ context.Context, _ int, _ Registration, handle string) (string, error) {
+func (f *fakeKubernetes) CreateCredential(_ context.Context, _ int, _ Registration, scope, handle string) (string, error) {
 	f.createCredentialCalls++
+	f.credentialScopes = append(f.credentialScopes, scope)
 	f.credentialHandles = append(f.credentialHandles, handle)
 	if f.createCredentialErr != nil {
 		return "", f.createCredentialErr
@@ -92,14 +116,15 @@ func (f *fakeKubernetes) DeleteCredential(_ context.Context, _ int, uid string) 
 
 func testConfig() Config {
 	return Config{
-		Namespace:            "forgejo-runners",
-		RunnerName:           "ephemeral-slot-0",
-		RunnerLabels:         []string{"linux-amd64"},
-		RunnerPodName:        "runner-job",
-		CredentialSecretName: "runner-credential",
-		RunnerStartupTimeout: 30 * time.Minute,
-		RunnerUnknownTimeout: 5 * time.Minute,
-		MaxConcurrent:        1,
+		ForgejoRepositoryAllowlist: []string{testScope},
+		Namespace:                  "forgejo-runners",
+		RunnerName:                 "ephemeral-slot-0",
+		RunnerLabels:               []string{"linux-amd64"},
+		RunnerPodName:              "runner-job",
+		CredentialSecretName:       "runner-credential",
+		RunnerStartupTimeout:       30 * time.Minute,
+		RunnerUnknownTimeout:       5 * time.Minute,
+		MaxConcurrent:              1,
 	}
 }
 
@@ -379,5 +404,50 @@ func TestReconcileHonorsMaxConcurrentAndTargetsWaitingJobs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(kubernetes.credentialHandles, []string{"first-handle", "second-handle"}) {
 		t.Fatalf("credential handles = %v", kubernetes.credentialHandles)
+	}
+}
+
+func TestReconcileTargetsSameHandleInDifferentRepositoryScopes(t *testing.T) {
+	cfg := testConfig()
+	cfg.ForgejoRepositoryAllowlist = []string{"example/one", "example/two"}
+	cfg.MaxConcurrent = 2
+	forgejo := &fakeForgejo{
+		jobs: []RemoteJob{
+			{Scope: "example/one", ID: 11, Attempt: 1, Handle: "shared-handle", Status: "waiting"},
+			{Scope: "example/two", ID: 12, Attempt: 1, Handle: "shared-handle", Status: "waiting"},
+		},
+		registration: Registration{ID: 42, UUID: "uuid", Token: "token"},
+	}
+	kubernetes := &fakeKubernetes{}
+
+	if err := Reconcile(context.Background(), cfg, forgejo, kubernetes, testLogger()); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	wantScopes := []string{"example/one", "example/two"}
+	if !reflect.DeepEqual(forgejo.registeredScopes, wantScopes) {
+		t.Fatalf("registered scopes = %v, want %v", forgejo.registeredScopes, wantScopes)
+	}
+	if !reflect.DeepEqual(kubernetes.credentialScopes, wantScopes) {
+		t.Fatalf("credential scopes = %v, want %v", kubernetes.credentialScopes, wantScopes)
+	}
+	if kubernetes.createPodCalls != 2 {
+		t.Fatalf("CreatePod calls = %d, want 2", kubernetes.createPodCalls)
+	}
+}
+
+func TestReconcileRetainsCredentialOutsideCurrentAllowlist(t *testing.T) {
+	cfg := testConfig()
+	forgejo := &fakeForgejo{}
+	kubernetes := &fakeKubernetes{credential: CredentialState{Exists: true, UID: "credential-uid", Scope: "example/removed", RunnerID: 42, JobHandle: "job-handle"}}
+
+	err := Reconcile(context.Background(), cfg, forgejo, kubernetes, testLogger())
+	if err == nil {
+		t.Fatal("Reconcile() accepted a credential outside the current allowlist")
+	}
+	if len(forgejo.deleted) != 0 {
+		t.Fatalf("remote runner cleanup occurred: %v", forgejo.deleted)
+	}
+	if kubernetes.deleteCredentialCalls != 0 {
+		t.Fatalf("credential cleanup occurred: %d", kubernetes.deleteCredentialCalls)
 	}
 }

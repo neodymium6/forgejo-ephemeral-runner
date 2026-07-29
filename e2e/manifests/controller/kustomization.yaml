@@ -11,8 +11,10 @@ patches:
         path: /data/FORGEJO_INSTANCE_URL
         value: http://forgejo.forgejo-e2e.svc.cluster.local:3001
       - op: replace
-        path: /data/FORGEJO_RUNNER_SCOPE
-        value: repository:e2e-admin/e2e-repository
+        path: /data/FORGEJO_REPOSITORY_ALLOWLIST
+        value: |-
+          e2e-admin/e2e-repository
+          e2e-admin/e2e-repository-secondary
       - op: replace
         path: /data/FORGEJO_RUNNER_NAME
         value: e2e-ephemeral

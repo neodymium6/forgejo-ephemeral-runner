@@ -18,7 +18,10 @@ import (
 	"time"
 )
 
-const runnerIDAnnotation = "forgejo-ephemeral-runner.dev/runner-id"
+const (
+	runnerIDAnnotation    = "forgejo-ephemeral-runner.dev/runner-id"
+	runnerScopeAnnotation = "forgejo-ephemeral-runner.dev/runner-scope"
+)
 
 type KubernetesClient struct {
 	httpClient     *http.Client
@@ -308,17 +311,26 @@ func (c *KubernetesClient) GetCredential(ctx context.Context, slot int) (Credent
 	if err != nil {
 		return CredentialState{}, err
 	}
+	runnerScope := strings.TrimSpace(secret.Metadata.Annotations[runnerScopeAnnotation])
+	if runnerScope == "" {
+		return CredentialState{}, errors.New("runner credential has an empty runner scope annotation")
+	}
 	jobHandle := string(secret.Data["handle"])
 	if strings.TrimSpace(jobHandle) == "" {
 		return CredentialState{}, errors.New("runner credential has an empty job handle")
 	}
-	return CredentialState{Exists: true, UID: secret.Metadata.UID, RunnerID: runnerID, JobHandle: jobHandle}, nil
+	return CredentialState{
+		Exists: true, UID: secret.Metadata.UID, Scope: runnerScope, RunnerID: runnerID, JobHandle: jobHandle,
+	}, nil
 }
 
-func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, jobHandle string) (string, error) {
+func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, registration Registration, runnerScope, jobHandle string) (string, error) {
 	templateData, _, _, err := c.slotResources(slot)
 	if err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(runnerScope) == "" {
+		return "", errors.New("runner scope is empty")
 	}
 	if strings.TrimSpace(jobHandle) == "" {
 		return "", errors.New("job handle is empty")
@@ -340,7 +352,10 @@ func (c *KubernetesClient) CreateCredential(ctx context.Context, slot int, regis
 		managedByLabel: managedByValue,
 		slotLabel:      strconv.Itoa(slot),
 	}
-	secret.Metadata.Annotations = map[string]string{runnerIDAnnotation: fmt.Sprintf("%d", registration.ID)}
+	secret.Metadata.Annotations = map[string]string{
+		runnerIDAnnotation:    fmt.Sprintf("%d", registration.ID),
+		runnerScopeAnnotation: runnerScope,
+	}
 	body, err := json.Marshal(secret)
 	if err != nil {
 		return "", err
