@@ -75,16 +75,26 @@ func scopeAPIPath(scope string) (string, error) {
 		if strings.Contains(value, "/") {
 			return "", errors.New("organization scope must contain exactly one name")
 		}
+		if isDotPathSegment(value) {
+			return "", errors.New("organization scope must not use a dot path segment")
+		}
 		return "/api/v1/orgs/" + url.PathEscape(value) + "/actions/runners", nil
 	case "repository":
 		owner, repository, ok := strings.Cut(value, "/")
 		if !ok || owner == "" || repository == "" || strings.Contains(repository, "/") {
 			return "", errors.New("repository scope must be repository:<owner>/<repo>")
 		}
+		if isDotPathSegment(owner) || isDotPathSegment(repository) {
+			return "", errors.New("repository scope must not use dot path segments")
+		}
 		return "/api/v1/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repository) + "/actions/runners", nil
 	default:
 		return "", fmt.Errorf("unsupported Forgejo runner scope %q", kind)
 	}
+}
+
+func isDotPathSegment(value string) bool {
+	return value == "." || value == ".."
 }
 
 func (c *forgejoClient) ListJobs(ctx context.Context, labels []string) ([]RemoteJob, error) {

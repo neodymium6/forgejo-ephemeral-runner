@@ -318,7 +318,18 @@ func TestScopeAPIPath(t *testing.T) {
 }
 
 func TestScopeAPIPathRejectsMalformedScope(t *testing.T) {
-	for _, input := range []string{"", "repository:owner", "organization:a/b", "unknown:value"} {
+	for _, input := range []string{
+		"",
+		"organization:.",
+		"organization:..",
+		"organization:a/b",
+		"repository:owner",
+		"repository:./admin",
+		"repository:../admin",
+		"repository:owner/.",
+		"repository:owner/..",
+		"unknown:value",
+	} {
 		t.Run(input, func(t *testing.T) {
 			if _, err := scopeAPIPath(input); err == nil {
 				t.Fatalf("scopeAPIPath(%q) succeeded", input)
