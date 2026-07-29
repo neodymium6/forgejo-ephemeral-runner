@@ -195,7 +195,7 @@ e2e_kubectl() {
 e2e_cluster_exists() {
   local provider="$1"
   e2e_kind "${provider}" get clusters 2>/dev/null |
-    grep -Fqx -- "${e2e_cluster_name}"
+    grep -Fx -- "${e2e_cluster_name}" >/dev/null
 }
 
 e2e_delete_cluster() {
