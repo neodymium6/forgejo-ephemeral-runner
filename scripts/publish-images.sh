@@ -197,7 +197,10 @@ jq -n \
       controller: $controller
     }
   }' >"$manifest"
-sha256sum "$manifest" >"$manifest.sha256"
+(
+  cd "$release_dir"
+  sha256sum "${manifest##*/}" >"${manifest##*/}.sha256"
+)
 
 cat >dist/RELEASE_NOTES.md <<EOF
 ## OCI images

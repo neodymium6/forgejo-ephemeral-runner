@@ -67,6 +67,9 @@ git push origin v0.2.0
 6. creates a Forgejo Release with a JSON manifest, checksums, and immutable
    `name@sha256:...` references.
 
+The checksum file records only the manifest basename, so the two downloaded
+assets can be verified directly from the same directory with `sha256sum -c`.
+
 The workflow places its pinned release action dependencies, including `curl`,
 `jq`, and `which`, on the action path from the Nix-built `release-tools`
 package. It does not install packages in the disposable runner at runtime.
