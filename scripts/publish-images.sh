@@ -83,18 +83,18 @@ inspect_archive() {
 inspect_archive "$runner_archive" "65532:65532" "/workspace" ""
 inspect_archive "$controller_archive" "65532:65532" "" "/bin/controller"
 
-archive_digest() {
+archive_config_digest() {
   local archive=$1
 
-  skopeo inspect --insecure-policy "docker-archive:$archive" |
-    jq -er '.Digest | select(test("^sha256:[0-9a-f]{64}$"))'
+  skopeo inspect --insecure-policy --raw "docker-archive:$archive" |
+    jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
 }
 
-runner_digest=$(archive_digest "$runner_archive")
-controller_digest=$(archive_digest "$controller_archive")
+runner_config_digest=$(archive_config_digest "$runner_archive")
+controller_config_digest=$(archive_config_digest "$controller_archive")
 
 if $dry_run; then
-  printf 'runner %s\ncontroller %s\n' "$runner_digest" "$controller_digest"
+  printf 'runner config %s\ncontroller config %s\n' "$runner_config_digest" "$controller_config_digest"
   exit 0
 fi
 
@@ -130,22 +130,23 @@ unset REGISTRY_TOKEN registry_token
 
 publish_image() {
   local name=$1
-  local expected_digest=$2
+  local expected_config_digest=$2
   local archive=$3
   local source="docker-archive:$archive"
   local repository_ref="$registry/$repository/$name"
   local destination="docker://$repository_ref:$version"
   local tags
+  local remote_config_digest
   local remote_digest
 
   tags=$(skopeo list-tags --authfile "$auth_file" "docker://$repository_ref")
   if jq -e --arg tag "$version" '.Tags | index($tag) != null' <<<"$tags" >/dev/null; then
-    remote_digest=$(
-      skopeo inspect --authfile "$auth_file" "$destination" |
-        jq -r '.Digest'
+    remote_config_digest=$(
+      skopeo inspect --authfile "$auth_file" --raw "$destination" |
+        jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
     )
-    [[ $remote_digest == "$expected_digest" ]] ||
-      fail "$repository_ref:$version already exists with a different digest"
+    [[ $remote_config_digest == "$expected_config_digest" ]] ||
+      fail "$repository_ref:$version already exists with different image content"
   else
     skopeo copy \
       --insecure-policy \
@@ -153,19 +154,24 @@ publish_image() {
       --authfile "$auth_file" \
       "$source" \
       "$destination" >/dev/null
-    remote_digest=$(
-      skopeo inspect --authfile "$auth_file" "$destination" |
-        jq -r '.Digest'
+    remote_config_digest=$(
+      skopeo inspect --authfile "$auth_file" --raw "$destination" |
+        jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))'
     )
-    [[ $remote_digest == "$expected_digest" ]] ||
-      fail "$repository_ref:$version digest changed during publication"
+    [[ $remote_config_digest == "$expected_config_digest" ]] ||
+      fail "$repository_ref:$version content changed during publication"
   fi
+
+  remote_digest=$(
+    skopeo inspect --authfile "$auth_file" "$destination" |
+      jq -er '.Digest | select(test("^sha256:[0-9a-f]{64}$"))'
+  )
 
   printf '%s@%s' "$repository_ref" "$remote_digest"
 }
 
-runner_ref=$(publish_image runner "$runner_digest" "$runner_archive")
-controller_ref=$(publish_image controller "$controller_digest" "$controller_archive")
+runner_ref=$(publish_image runner "$runner_config_digest" "$runner_archive")
+controller_ref=$(publish_image controller "$controller_config_digest" "$controller_archive")
 
 release_dir=dist/release
 install -d "$release_dir"

@@ -35,8 +35,9 @@ nix develop --command just release-dry-run 0.2.0
 ```
 
 The dry-run requires a clean `x86_64-linux` checkout. It verifies image users,
-architecture, working directory, and controller entrypoint, then prints the
-locally calculated image digests.
+architecture, working directory, and controller entrypoint, then prints each
+image configuration digest. The configuration digest covers the runtime
+configuration and uncompressed filesystem-layer identities.
 
 ## Publish
 
@@ -60,10 +61,12 @@ git push origin v0.2.0
 6. creates a Forgejo Release with a JSON manifest, checksums, and immutable
    `name@sha256:...` references.
 
-The script never creates `latest`. If a version already exists with the same
-digest, publication is resumable. If the existing digest differs, it fails
-without overwriting the version. The release action also refuses to replace an
-existing Release.
+The script never creates `latest`. A registry may recompress layers while
+preserving their uncompressed content, so resumability compares the image
+configuration digest rather than the transport manifest digest. If a version
+already contains the same image configuration, publication resumes and records
+its registry manifest digest. Different content fails without overwriting the
+version. The release action also refuses to replace an existing Release.
 
 The base runner uses single-user Nix without a build sandbox under the dedicated
 UID and GID 65532. Its private Nix store is writable by that identity, while the
