@@ -30,14 +30,16 @@ jobs:
       - name: Run project checks
         run: nix develop --command just check
 
-      - name: Publish OCI images
-        env:
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
-          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
-        run: nix develop --command scripts/publish-images.sh "${FORGEJO_REF_NAME#v}"
-
       - name: Prepare release action dependencies
         run: |
+          if [[ -e /homeless-shelter ]]; then
+            if [[ ! -d /homeless-shelter || -L /homeless-shelter ]]; then
+              echo "error: /homeless-shelter is not a regular directory" >&2
+              exit 1
+            fi
+            find /homeless-shelter -xdev -depth -mindepth 1 -delete
+            rmdir /homeless-shelter
+          fi
           release_tools=$(nix build .#release-tools --no-link --print-out-paths)
           if [[ -n ${FORGEJO_PATH:-} ]]; then
             printf '%s/bin\n' "$release_tools" >>"$FORGEJO_PATH"
@@ -45,6 +47,12 @@ jobs:
           if [[ -n ${GITHUB_PATH:-} && ${GITHUB_PATH:-} != ${FORGEJO_PATH:-} ]]; then
             printf '%s/bin\n' "$release_tools" >>"$GITHUB_PATH"
           fi
+
+      - name: Publish OCI images
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME }}
+        run: nix develop --command scripts/publish-images.sh "${FORGEJO_REF_NAME#v}"
 
       - name: Create Forgejo release
         uses: https://data.forgejo.org/actions/forgejo-release@98265452477dafb3f0f27ba9c462c90b18cb44fd

@@ -65,6 +65,13 @@ digest, publication is resumable. If the existing digest differs, it fails
 without overwriting the version. The release action also refuses to replace an
 existing Release.
 
+The base runner uses single-user Nix without a build sandbox. Nix reserves the
+nonexistent `/homeless-shelter` path as a build home and refuses purity-sensitive
+builds if a previous derivation created it. During a release, the workflow and
+publisher remove that exact directory only inside the root Forgejo Actions
+container after verifying it is not a symlink. No host path is mounted there,
+and the disposable Pod is deleted after the job.
+
 Publishing is separate from deployment. Review the generated image manifest,
 then update and reconcile the private infrastructure overlay in an explicit
 operator change.

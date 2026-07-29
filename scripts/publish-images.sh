@@ -32,9 +32,26 @@ if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   fail "image publication currently requires x86_64 Linux"
 fi
 
-for command in git grep install jq mktemp nix sha256sum skopeo uname; do
+for command in find git grep id install jq mktemp nix rmdir sha256sum skopeo uname; do
   command -v "$command" >/dev/null || fail "required command not found: $command"
 done
+
+prepare_nix_build() {
+  local build_home=/homeless-shelter
+
+  [[ -e $build_home ]] || return 0
+  [[ ${FORGEJO_ACTIONS:-} == true ]] ||
+    fail "$build_home exists outside Forgejo Actions; remove it explicitly before building"
+  [[ $(id -u) -eq 0 ]] || fail "$build_home cleanup requires the root runner user"
+  [[ -d $build_home && ! -L $build_home ]] ||
+    fail "$build_home is not a regular directory"
+
+  # Unsandboxed Nix deliberately uses this nonexistent path as build HOME and
+  # refuses output rewriting if an earlier build created it. The runner Pod is
+  # disposable and mounts nothing at this exact path.
+  find "$build_home" -xdev -depth -mindepth 1 -delete
+  rmdir "$build_home"
+}
 
 flake_version=$(nix eval --raw .#packages.x86_64-linux.controller.version)
 if [[ $version != "$flake_version" ]]; then
@@ -51,8 +68,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-runner_archive=$(nix build .#runner-image --no-link --print-out-paths)
+prepare_nix_build
 controller_archive=$(nix build .#controller-image --no-link --print-out-paths)
+prepare_nix_build
+runner_archive=$(nix build .#runner-image --no-link --print-out-paths)
 
 inspect_archive() {
   local archive=$1
