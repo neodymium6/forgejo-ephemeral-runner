@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +114,17 @@ func TestDeleteRunnerAcceptsNotFound(t *testing.T) {
 	client := &forgejoClient{httpClient: server.Client(), scopeURL: scopeURL, token: "token"}
 	if err := client.DeleteRunner(context.Background(), 99); err != nil {
 		t.Fatalf("DeleteRunner() error = %v", err)
+	}
+}
+
+func TestForgejoResponseErrorOmitsResponseBody(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Body:       io.NopCloser(strings.NewReader("sensitive upstream response")),
+	}
+	err := forgejoResponseError("list jobs", resp)
+	if got, want := err.Error(), "list jobs returned HTTP 502"; got != want {
+		t.Fatalf("forgejoResponseError() = %q, want %q", got, want)
 	}
 }
 

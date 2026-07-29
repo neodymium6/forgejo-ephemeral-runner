@@ -214,6 +214,17 @@ func TestKubernetesDeleteUsesUIDPrecondition(t *testing.T) {
 	}
 }
 
+func TestKubernetesResponseErrorOmitsResponseBody(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusUnprocessableEntity,
+		Body:       io.NopCloser(strings.NewReader("sensitive admission response")),
+	}
+	err := kubernetesResponseError("create runner credential", resp)
+	if got, want := err.Error(), "create runner credential returned HTTP 422"; got != want {
+		t.Fatalf("kubernetesResponseError() = %q, want %q", got, want)
+	}
+}
+
 func TestKubernetesClientRejectsHTTPWithoutExplicitOptIn(t *testing.T) {
 	cfg := Config{KubernetesAPIURL: "http://kubernetes-api.example.invalid"}
 	_, err := NewKubernetesClient(cfg)

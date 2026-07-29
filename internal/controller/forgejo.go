@@ -234,6 +234,6 @@ func (c *forgejoClient) authorize(req *http.Request) {
 }
 
 func forgejoResponseError(operation string, resp *http.Response) error {
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	return fmt.Errorf("%s returned HTTP %d: %s", operation, resp.StatusCode, strings.TrimSpace(string(body)))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return fmt.Errorf("%s returned HTTP %d", operation, resp.StatusCode)
 }
