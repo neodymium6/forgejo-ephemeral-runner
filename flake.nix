@@ -18,7 +18,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = "0.2.4";
+          version = "0.2.5";
           controller = pkgs.buildGoModule {
             pname = "forgejo-ephemeral-runner-controller";
             inherit version;
