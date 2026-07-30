@@ -10,6 +10,7 @@ data:
   FORGEJO_RUNNER_LABELS: linux-amd64:host
   RUNNER_IMAGE: forgejo-ephemeral-runner:dev
   LEADER_ELECTION_LEASE_NAME: forgejo-ephemeral-runner-controller
+  METRICS_LISTEN_ADDRESS: ":9090"
   MAX_CONCURRENT: "1"
   RUNNER_STARTUP_TIMEOUT: 30m
   RUNNER_UNKNOWN_TIMEOUT: 5m

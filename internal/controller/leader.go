@@ -33,6 +33,7 @@ type LeaderElector struct {
 	retryPeriod     time.Duration
 	now             func() time.Time
 	logger          *log.Logger
+	metrics         *Metrics
 	observedVersion string
 	observedTime    time.Time
 }
@@ -54,7 +55,12 @@ type kubernetesLease struct {
 	} `json:"spec"`
 }
 
-func NewLeaderElector(cfg Config, kubernetes *KubernetesClient, logger *log.Logger) (*LeaderElector, error) {
+func NewLeaderElector(
+	cfg Config,
+	kubernetes *KubernetesClient,
+	logger *log.Logger,
+	metrics *Metrics,
+) (*LeaderElector, error) {
 	baseURL, err := url.Parse(cfg.KubernetesAPIURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse Kubernetes API URL for leader election: %w", err)
@@ -87,6 +93,7 @@ func NewLeaderElector(cfg Config, kubernetes *KubernetesClient, logger *log.Logg
 		retryPeriod:   defaultRetryPeriod,
 		now:           time.Now,
 		logger:        logger,
+		metrics:       metrics,
 	}, nil
 }
 
@@ -94,6 +101,7 @@ func (e *LeaderElector) Run(ctx context.Context, runLeader func(context.Context)
 	if runLeader == nil {
 		return errors.New("leader callback is required")
 	}
+	e.metrics.setLeader(false)
 
 	for {
 		for {
@@ -109,6 +117,7 @@ func (e *LeaderElector) Run(ctx context.Context, runLeader func(context.Context)
 		}
 
 		e.logger.Printf("acquired leader Lease %q as %q", e.leaseName, e.identity)
+		e.metrics.setLeader(true)
 		leaderCtx, cancelLeader := context.WithCancel(ctx)
 		leaderDone := make(chan error, 1)
 		go func() {
@@ -122,6 +131,7 @@ func (e *LeaderElector) Run(ctx context.Context, runLeader func(context.Context)
 			select {
 			case <-ctx.Done():
 				ticker.Stop()
+				e.metrics.setLeader(false)
 				cancelLeader()
 				err := <-leaderDone
 				if err != nil && !errors.Is(err, context.Canceled) {
@@ -130,6 +140,7 @@ func (e *LeaderElector) Run(ctx context.Context, runLeader func(context.Context)
 				return ctx.Err()
 			case err := <-leaderDone:
 				ticker.Stop()
+				e.metrics.setLeader(false)
 				cancelLeader()
 				if err == nil {
 					return errors.New("leader callback stopped unexpectedly")
@@ -155,6 +166,7 @@ func (e *LeaderElector) Run(ctx context.Context, runLeader func(context.Context)
 
 		ticker.Stop()
 		e.logger.Printf("lost leader Lease %q; stopping active controller", e.leaseName)
+		e.metrics.setLeader(false)
 		cancelLeader()
 		err := <-leaderDone
 		if err != nil && !errors.Is(err, context.Canceled) {

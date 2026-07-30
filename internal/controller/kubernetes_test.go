@@ -323,7 +323,7 @@ func TestKubernetesServiceAccountTokenReloadsForAPIAndLeaderElection(t *testing.
 	if err := os.WriteFile(tokenPath, []byte("rotated-token"), 0o600); err != nil {
 		t.Fatalf("write rotated token: %v", err)
 	}
-	elector, err := NewLeaderElector(cfg, client, log.New(io.Discard, "", 0))
+	elector, err := NewLeaderElector(cfg, client, log.New(io.Discard, "", 0), nil)
 	if err != nil {
 		t.Fatalf("NewLeaderElector() error = %v", err)
 	}

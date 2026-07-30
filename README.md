@@ -65,6 +65,20 @@ access the cluster policy permits.
 See [docs/security.md](docs/security.md) for the complete threat model and
 limitations.
 
+## Observability
+
+Every controller replica provides a fixed, low-cardinality Prometheus endpoint
+at `:9090/metrics` by default. Metrics describe leadership, runner capacity,
+queue observations, reconciliation health, bounded mutation operations, and
+cleanup reasons. They do not label repository names, job identifiers, runner
+identifiers, URLs, tokens, or Kubernetes object UIDs.
+
+The base declares the container port but creates no monitoring Service and its
+default-deny ingress policy remains in force. Create Prometheus discovery,
+the narrow ingress allow rule, Grafana dashboards, and alerts in the private
+infrastructure overlay. See [docs/metrics.md](docs/metrics.md) for the schema,
+PromQL examples, and the privacy boundary.
+
 ## Development
 
 Enter the pinned development environment and run all checks:
@@ -126,8 +140,10 @@ overlay must:
 4. set a deterministic runner name and required runner labels;
 5. set `MAX_CONCURRENT` from `1` through `10`;
 6. review `RUNNER_STARTUP_TIMEOUT` and `RUNNER_UNKNOWN_TIMEOUT`;
-7. provide a Secret named `forgejo-runner-controller` with an `api-token` key;
-8. review resource limits and network access for the target cluster.
+7. review `METRICS_LISTEN_ADDRESS` and add narrowly scoped monitoring access
+   if used;
+8. provide a Secret named `forgejo-runner-controller` with an `api-token` key;
+9. review resource limits and network access for the target cluster.
 
 The allowlist is a newline-delimited string. YAML's `|` block scalar keeps the
 lines in one ConfigMap value:

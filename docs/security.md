@@ -12,6 +12,24 @@ base includes a standard Kubernetes NetworkPolicy that denies ingress to
 controller and runner Pods when the target cluster's CNI enforces
 NetworkPolicy. The manifest alone cannot enable enforcement in the CNI.
 
+## Metrics endpoint
+
+Each controller replica serves unauthenticated Prometheus metrics on TCP port
+9090 by default. The fixed schema exposes aggregate leadership, capacity,
+queue-observation, reconciliation, mutation, and cleanup state plus the build
+version. The exporter payload does not expose repository or job identities,
+runner identifiers, Forgejo URLs, credentials, Kubernetes UIDs, or controller
+Pod names. Prometheus service discovery may add its own Kubernetes target
+labels. Operational counts and software versions are still deployment
+information and should not be public.
+
+The base creates no Service or monitor object, and its default-deny ingress
+NetworkPolicy selects the controller Pods. A private overlay must explicitly
+add both discovery and a narrow ingress allow rule for its Prometheus workload.
+Application-level authentication is not a substitute for that network boundary
+because the endpoint intentionally implements none. See
+[metrics.md](metrics.md) for the schema and deployment guidance.
+
 ## Credentials
 
 The long-lived Forgejo API token is available only to the two trusted

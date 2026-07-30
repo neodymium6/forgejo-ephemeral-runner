@@ -26,6 +26,7 @@ const (
 	defaultControllerUserAgent  = "forgejo-ephemeral-runner-controller"
 	defaultMaxConcurrent        = 1
 	defaultLeaderLeaseName      = "forgejo-ephemeral-runner-controller"
+	defaultMetricsListenAddress = ":9090"
 	maxSupportedConcurrent      = 10
 )
 
@@ -45,6 +46,7 @@ type Config struct {
 	RunnerLabels                []string
 	ControllerIdentity          string
 	LeaderLeaseName             string
+	MetricsListenAddress        string
 	RunnerPodName               string
 	RunnerImage                 string
 	CredentialSecretName        string
@@ -69,6 +71,7 @@ func ConfigFromEnvironment() (Config, error) {
 		RunnerPodName:               environmentOrDefault("RUNNER_POD_NAME", defaultRunnerPodName),
 		ControllerIdentity:          strings.TrimSpace(os.Getenv("POD_NAME")),
 		LeaderLeaseName:             environmentOrDefault("LEADER_ELECTION_LEASE_NAME", defaultLeaderLeaseName),
+		MetricsListenAddress:        environmentOrDefault("METRICS_LISTEN_ADDRESS", defaultMetricsListenAddress),
 		RunnerImage:                 strings.TrimSpace(os.Getenv("RUNNER_IMAGE")),
 		CredentialSecretName:        environmentOrDefault("RUNNER_CREDENTIAL_SECRET_NAME", defaultCredentialName),
 		PodTemplatePath:             environmentOrDefault("RUNNER_POD_TEMPLATE_FILE", defaultPodTemplatePath),
@@ -149,6 +152,9 @@ func ConfigFromEnvironment() (Config, error) {
 	if len(cfg.LeaderLeaseName) > 63 || !dnsLabel.MatchString(cfg.LeaderLeaseName) {
 		return Config{}, errors.New("LEADER_ELECTION_LEASE_NAME must be a DNS label")
 	}
+	if err := validateMetricsListenAddress(cfg.MetricsListenAddress); err != nil {
+		return Config{}, fmt.Errorf("METRICS_LISTEN_ADDRESS: %w", err)
+	}
 	port := environmentOrDefault("KUBERNETES_SERVICE_PORT_HTTPS", "443")
 	cfg.KubernetesAPIURL = strings.TrimSpace(os.Getenv("KUBERNETES_API_URL"))
 	if cfg.KubernetesAPIURL == "" {
@@ -195,6 +201,21 @@ func ConfigFromEnvironment() (Config, error) {
 		return Config{}, fmt.Errorf("MAX_CONCURRENT must be between 1 and %d", maxSupportedConcurrent)
 	}
 	return cfg, nil
+}
+
+func validateMetricsListenAddress(address string) error {
+	host, rawPort, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("must be an IP host and port: %w", err)
+	}
+	if host != "" && net.ParseIP(host) == nil {
+		return errors.New("host must be empty or an IP address")
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func parseRepositoryAllowlist(raw string) ([]string, error) {

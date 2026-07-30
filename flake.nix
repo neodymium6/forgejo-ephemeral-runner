@@ -28,6 +28,7 @@
             ldflags = [
               "-s"
               "-w"
+              "-X main.version=${version}"
             ];
           };
           e2eProxy = pkgs.buildGoModule {

@@ -35,6 +35,9 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	if cfg.MaxConcurrent != 3 {
 		t.Fatalf("MaxConcurrent = %d, want 3", cfg.MaxConcurrent)
 	}
+	if cfg.MetricsListenAddress != defaultMetricsListenAddress {
+		t.Fatalf("MetricsListenAddress = %q, want %q", cfg.MetricsListenAddress, defaultMetricsListenAddress)
+	}
 	if !cfg.KubernetesAllowInsecureHTTP {
 		t.Fatal("KUBERNETES_INSECURE_ALLOW_HTTP=true was not parsed")
 	}
@@ -46,6 +49,31 @@ func TestConfigParsesRunnerCapacityAndLabels(t *testing.T) {
 	}
 	if want := []string{"example/project"}; !reflect.DeepEqual(cfg.ForgejoRepositoryAllowlist, want) {
 		t.Fatalf("ForgejoRepositoryAllowlist = %v, want %v", cfg.ForgejoRepositoryAllowlist, want)
+	}
+}
+
+func TestConfigParsesMetricsListenAddress(t *testing.T) {
+	setValidConfigEnvironment(t)
+	t.Setenv("METRICS_LISTEN_ADDRESS", "127.0.0.1:9191")
+
+	cfg, err := ConfigFromEnvironment()
+	if err != nil {
+		t.Fatalf("ConfigFromEnvironment() error = %v", err)
+	}
+	if cfg.MetricsListenAddress != "127.0.0.1:9191" {
+		t.Fatalf("MetricsListenAddress = %q", cfg.MetricsListenAddress)
+	}
+}
+
+func TestConfigRejectsInvalidMetricsListenAddress(t *testing.T) {
+	for _, value := range []string{"9090", "localhost:9090", ":0", ":65536", "[not-an-ip]:9090"} {
+		t.Run(value, func(t *testing.T) {
+			setValidConfigEnvironment(t)
+			t.Setenv("METRICS_LISTEN_ADDRESS", value)
+			if _, err := ConfigFromEnvironment(); err == nil {
+				t.Fatalf("METRICS_LISTEN_ADDRESS=%q succeeded", value)
+			}
+		})
 	}
 }
 

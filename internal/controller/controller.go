@@ -91,10 +91,13 @@ func Run(
 	forgejo Forgejo,
 	kubernetes Kubernetes,
 	logger *log.Logger,
+	metrics *Metrics,
 ) error {
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
 
+	metrics.setRunnerSlots(0, cfg.MaxConcurrent)
+	metrics.setQueue(0, false)
 	logger.Printf(
 		"scaling ephemeral runners %q to queued jobs in namespace %q (maximum %d)",
 		cfg.RunnerName,
@@ -102,7 +105,10 @@ func Run(
 		cfg.MaxConcurrent,
 	)
 	for {
-		if err := Reconcile(ctx, cfg, forgejo, kubernetes, logger); err != nil {
+		started := time.Now()
+		err := reconcile(ctx, cfg, forgejo, kubernetes, logger, metrics)
+		metrics.observeReconcile(time.Since(started), err)
+		if err != nil {
 			logger.Printf("reconcile failed; will retry: %v", err)
 		}
 
@@ -121,6 +127,17 @@ func Reconcile(
 	kubernetes Kubernetes,
 	logger *log.Logger,
 ) error {
+	return reconcile(ctx, cfg, forgejo, kubernetes, logger, nil)
+}
+
+func reconcile(
+	ctx context.Context,
+	cfg Config,
+	forgejo Forgejo,
+	kubernetes Kubernetes,
+	logger *log.Logger,
+	metrics *Metrics,
+) error {
 	if cfg.MaxConcurrent < 1 || cfg.MaxConcurrent > maxSupportedConcurrent {
 		return fmt.Errorf("MaxConcurrent must be between 1 and %d", maxSupportedConcurrent)
 	}
@@ -128,6 +145,7 @@ func Reconcile(
 		return errors.New("runner recovery timeouts must be positive")
 	}
 	now := time.Now()
+	metrics.setQueue(0, false)
 
 	type localSlot struct {
 		pod        PodState
@@ -155,7 +173,10 @@ func Reconcile(
 		if pod.Exists {
 			if !credential.Exists {
 				logger.Printf("deleting orphan runner pod in slot %d", slot)
-				return kubernetes.DeletePod(ctx, slot, pod.UID)
+				metrics.observeCleanup(cleanupOrphanPod)
+				err := kubernetes.DeletePod(ctx, slot, pod.UID)
+				metrics.observeOperation(operationPodDelete, err)
+				return err
 			}
 			if pod.Deleting {
 				activeCount++
@@ -165,12 +186,26 @@ func Reconcile(
 			}
 			if timeout, expired := stalledPodTimeout(pod, cfg, now); expired {
 				logger.Printf("deleting %s runner pod in slot %d after %s", pod.Phase, slot, timeout)
-				return kubernetes.DeletePod(ctx, slot, pod.UID)
+				reason := cleanupPendingTimeout
+				if pod.Phase == "Unknown" {
+					reason = cleanupUnknownTimeout
+				}
+				metrics.observeCleanup(reason)
+				err := kubernetes.DeletePod(ctx, slot, pod.UID)
+				metrics.observeOperation(operationPodDelete, err)
+				return err
 			}
 			switch pod.Phase {
 			case "Succeeded", "Failed":
 				logger.Printf("deleting terminal runner pod in slot %d with phase %s", slot, pod.Phase)
-				return kubernetes.DeletePod(ctx, slot, pod.UID)
+				reason := cleanupPodSucceeded
+				if pod.Phase == "Failed" {
+					reason = cleanupPodFailed
+				}
+				metrics.observeCleanup(reason)
+				err := kubernetes.DeletePod(ctx, slot, pod.UID)
+				metrics.observeOperation(operationPodDelete, err)
+				return err
 			default:
 				activeCount++
 				activeHandles[scopedJobHandle{Scope: credential.Scope, Handle: credential.JobHandle}] = struct{}{}
@@ -190,14 +225,19 @@ func Reconcile(
 			}
 			if present {
 				logger.Printf("removing Forgejo runner registration %d from scope %q slot %d", credential.RunnerID, credential.Scope, slot)
-				if err := forgejo.DeleteRunner(ctx, credential.Scope, credential.RunnerID); err != nil {
+				err := forgejo.DeleteRunner(ctx, credential.Scope, credential.RunnerID)
+				metrics.observeOperation(operationRegistrationDelete, err)
+				if err != nil {
 					return fmt.Errorf("delete Forgejo runner %d from scope %q: %w", credential.RunnerID, credential.Scope, err)
 				}
 			}
 			logger.Printf("deleting consumed runner credential in slot %d", slot)
-			return kubernetes.DeleteCredential(ctx, slot, credential.UID)
+			err = kubernetes.DeleteCredential(ctx, slot, credential.UID)
+			metrics.observeOperation(operationCredentialDelete, err)
+			return err
 		}
 	}
+	metrics.setRunnerSlots(activeCount, cfg.MaxConcurrent)
 
 	remoteRunners, err := forgejo.ListRunners(ctx)
 	if err != nil {
@@ -230,7 +270,10 @@ func Reconcile(
 			return fmt.Errorf("managed runner %q has an invalid ID", runner.Name)
 		}
 		logger.Printf("removing stale Forgejo runner registration %d from scope %q", runner.ID, runner.Scope)
-		if err := forgejo.DeleteRunner(ctx, runner.Scope, runner.ID); err != nil {
+		metrics.observeCleanup(cleanupStaleRegistration)
+		err := forgejo.DeleteRunner(ctx, runner.Scope, runner.ID)
+		metrics.observeOperation(operationRegistrationDelete, err)
+		if err != nil {
 			return fmt.Errorf("delete stale Forgejo runner %d from scope %q: %w", runner.ID, runner.Scope, err)
 		}
 		return nil
@@ -262,6 +305,7 @@ func Reconcile(
 		activeHandles[key] = struct{}{}
 		waiting = append(waiting, job)
 	}
+	metrics.setQueue(len(waiting), true)
 
 	jobIndex := 0
 	for slot, local := range slots {
@@ -284,23 +328,31 @@ func Reconcile(
 		}
 
 		registration, err := forgejo.RegisterRunner(ctx, job.Scope, name, managedDescription)
+		metrics.observeOperation(operationRegistrationCreate, err)
 		if err != nil {
 			return fmt.Errorf("register ephemeral Forgejo runner for scope %q slot %d: %w", job.Scope, slot, err)
 		}
 		logger.Printf("created ephemeral Forgejo runner registration %d for scope %q slot %d", registration.ID, job.Scope, slot)
 
 		credentialUID, err := kubernetes.CreateCredential(ctx, slot, registration, job.Scope, job.Handle)
+		metrics.observeOperation(operationCredentialCreate, err)
 		if err != nil {
 			cleanupErr := forgejo.DeleteRunner(ctx, job.Scope, registration.ID)
+			metrics.observeOperation(operationRegistrationDelete, cleanupErr)
 			return errors.Join(fmt.Errorf("create runner credential for slot %d: %w", slot, err), cleanupErr)
 		}
-		if err := kubernetes.CreatePod(ctx, slot); err != nil {
+		err = kubernetes.CreatePod(ctx, slot)
+		metrics.observeOperation(operationPodCreate, err)
+		if err != nil {
 			credentialErr := kubernetes.DeleteCredential(ctx, slot, credentialUID)
+			metrics.observeOperation(operationCredentialDelete, credentialErr)
 			registrationErr := forgejo.DeleteRunner(ctx, job.Scope, registration.ID)
+			metrics.observeOperation(operationRegistrationDelete, registrationErr)
 			return errors.Join(fmt.Errorf("create runner pod for slot %d: %w", slot, err), credentialErr, registrationErr)
 		}
 		logger.Printf("created runner pod in slot %d for Forgejo scope %q job %d attempt %d", slot, job.Scope, job.ID, job.Attempt)
 		activeCount++
+		metrics.setRunnerSlots(activeCount, cfg.MaxConcurrent)
 	}
 	return nil
 }
