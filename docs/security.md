@@ -66,6 +66,12 @@ access only; it does not need repository administration or runner-management
 access. The workflow uses Forgejo's job token separately to create a Release in
 the same repository.
 
+GitHub provides a short-lived repository `GITHUB_TOKEN` to the release workflow.
+Explicit `contents: write` and `packages: write` permissions allow it to publish
+GHCR images and create the matching GitHub Release without a personal access
+token. CI has only `contents: read`, receives no release credential, and uploads
+no artifacts.
+
 A version tag selects the exact source that receives the registry credential.
 Protect the `v*.*.*` tag pattern so unreviewed commits cannot trigger a release.
 The workflow does not run for pull requests, does not publish mutable `latest`

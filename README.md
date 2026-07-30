@@ -75,11 +75,13 @@ just check
 ```
 
 The Forgejo workflow in `.forgejo/workflows/ci.yaml` runs `just check` on pushes
-to `main` and on manual dispatch. It verifies formatting, unit and race tests,
-the launcher and E2E helper tests, static analysis, manifest rendering, and Nix
-flake evaluation. Before those checks, it also verifies the non-root runner
-identity, private Nix store access, inability to create `/homeless-shelter`, and
-two consecutive Nix builds.
+to `main` and on manual dispatch. The GitHub workflow in
+`.github/workflows/ci.yaml` runs the same checks on pushes to `main`, pull
+requests, and manual dispatch. They verify formatting, unit and race tests, the
+launcher and E2E helper tests, static analysis, manifest rendering, and Nix
+flake evaluation. Forgejo CI first verifies the non-root runner identity,
+private Nix store access, inability to create `/homeless-shelter`, and two
+consecutive Nix builds.
 
 The full end-to-end harness is deliberately separate from default CI. It needs
 a Docker or Podman service to create a fixed, disposable Kind cluster and is
@@ -103,10 +105,11 @@ Nixpkgs coreutils for Actions that use `#!/usr/bin/env` entrypoints. The
 controller image contains the Go controller and CA certificates.
 
 Pushing a protected semantic-version tag such as `v0.2.0` runs the release
-workflow. It verifies the repository, publishes both images to the current
-Forgejo instance's OCI registry without overwriting an existing version, and
-creates a Forgejo Release containing an image manifest and immutable digests.
-See [docs/releasing.md](docs/releasing.md) for setup and release procedures.
+workflow at that Git remote. Forgejo publishes both images to its OCI registry
+and creates a Forgejo Release. GitHub publishes both images to GHCR and creates
+a GitHub Release. Both paths refuse to overwrite different image content and
+attach an image manifest with immutable digests. See
+[docs/releasing.md](docs/releasing.md) for setup and release procedures.
 
 Release creation does not update a Kubernetes deployment. An operator must
 review the published manifest and explicitly pin its digests in a private
