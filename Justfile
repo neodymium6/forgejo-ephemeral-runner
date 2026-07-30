@@ -20,6 +20,7 @@ audit:
     go vet ./...
     golangci-lint run ./...
     shellcheck scripts/*.sh e2e/*.sh
+    actionlint
     yamllint -s deploy e2e/manifests e2e/fixtures
     forgejo-runner validate --directory .
 

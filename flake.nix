@@ -146,6 +146,7 @@
             paths = [
               pkgs.coreutils
               pkgs.curl
+              pkgs.gh
               pkgs.gnugrep
               pkgs.gnused
               pkgs.jq
@@ -191,9 +192,11 @@
             packages =
               with pkgs;
               [
+                actionlint
                 curl
                 forgejo-runner
                 git
+                gh
                 kind
                 go_1_26
                 golangci-lint

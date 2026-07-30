@@ -1,9 +1,11 @@
 # Releasing
 
-Releases are published to the OCI registry and Releases service of the Forgejo
-instance that hosts this repository. The workflow derives the HTTPS registry
-host and `owner/repository` package prefix from Forgejo's runtime context, so no
-deployment-specific domain or account is stored in this repository.
+Releases can be published independently through Forgejo and GitHub. Each remote
+builds the same pinned source and creates a release with an image manifest,
+checksums, and immutable OCI digests. Forgejo publishes under the hosting
+instance's OCI registry. GitHub publishes the two images under GHCR and creates
+a GitHub Release. No deployment-specific domain, account, or credential is
+stored in this repository.
 
 ## One-time repository setup
 
@@ -18,6 +20,9 @@ Configure these values in the Forgejo repository's Actions settings:
 Protect the `v*.*.*` tag pattern. Only reviewed commits on `main` should be
 eligible for a release tag. The registry credential is available only to the
 tag workflow step that publishes images.
+
+GitHub needs no additional repository secret. Its release workflow uses the
+short-lived `GITHUB_TOKEN` with `contents: write` and `packages: write`.
 
 ## Prepare a release
 
@@ -47,25 +52,33 @@ subdirectory is always removed on exit.
 
 ## Publish
 
-Create the tag on the reviewed `main` commit and push only that tag:
+Create the tag on the reviewed `main` commit and push only that tag to each
+release remote:
 
 ```sh
 git switch main
 git pull --ff-only
 git tag -a v0.2.0 -m "Release v0.2.0"
 git push origin v0.2.0
+git push github v0.2.0
 ```
 
-`.forgejo/workflows/release.yaml` then:
+`.forgejo/workflows/release.yaml` and `.github/workflows/release.yaml` then:
 
 1. checks out the full history without persisting checkout credentials;
 2. runs the complete `just check` suite;
 3. verifies that the tag version matches `flake.nix` and belongs to `main`;
 4. builds and inspects the runner and controller images;
-5. publishes `runner:X.Y.Z` and `controller:X.Y.Z` under this repository's
-   Forgejo OCI package prefix;
-6. creates a Forgejo Release with a JSON manifest, checksums, and immutable
-   `name@sha256:...` references.
+5. publishes `runner:X.Y.Z` and `controller:X.Y.Z` under the corresponding
+   Forgejo registry or GHCR package prefix;
+6. creates the corresponding Forgejo or GitHub Release with a JSON manifest,
+   checksums, and immutable `name@sha256:...` references.
+
+GitHub uses the package names
+`ghcr.io/owner/repository-runner:X.Y.Z` and
+`ghcr.io/owner/repository-controller:X.Y.Z`. Forgejo retains its existing
+`registry/owner/repository/runner:X.Y.Z` and
+`registry/owner/repository/controller:X.Y.Z` layout.
 
 The checksum file records only the manifest basename, so the two downloaded
 assets can be verified directly from the same directory with `sha256sum -c`.

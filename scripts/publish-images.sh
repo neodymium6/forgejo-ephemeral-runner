@@ -116,38 +116,103 @@ git show-ref --verify --quiet refs/remotes/origin/main ||
 git merge-base --is-ancestor HEAD refs/remotes/origin/main ||
   fail "tagged commit is not contained in origin/main"
 
+registry=${REGISTRY_HOST:-}
 server_url=${FORGEJO_SERVER_URL:-}
-repository=${FORGEJO_REPOSITORY:-}
-repository_owner=${FORGEJO_REPOSITORY_OWNER:-}
+repository=${REGISTRY_REPOSITORY:-${FORGEJO_REPOSITORY:-}}
+repository_owner=${REGISTRY_REPOSITORY_OWNER:-${FORGEJO_REPOSITORY_OWNER:-}}
 registry_token=${REGISTRY_TOKEN:-}
 registry_username=${REGISTRY_USERNAME:-$repository_owner}
+image_prefix=${REGISTRY_IMAGE_PREFIX:-$repository}
+image_separator=${REGISTRY_IMAGE_SEPARATOR:-/}
+github_package_owner=${REGISTRY_GITHUB_PACKAGE_OWNER:-}
 
-[[ $server_url =~ ^https://([^/]+)/?$ ]] ||
-  fail "FORGEJO_SERVER_URL must be an HTTPS origin without a path"
-registry=${BASH_REMATCH[1]}
+if [[ -z $registry ]]; then
+  [[ $server_url =~ ^https://([^/]+)/?$ ]] ||
+    fail "REGISTRY_HOST or an HTTPS FORGEJO_SERVER_URL origin is required"
+  registry=${BASH_REMATCH[1]}
+fi
+[[ $registry =~ ^[A-Za-z0-9.-]+(:[0-9]+)?$ ]] ||
+  fail "REGISTRY_HOST must be a registry host without a scheme or path"
 [[ $repository =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] ||
-  fail "FORGEJO_REPOSITORY must have the form owner/repository"
+  fail "REGISTRY_REPOSITORY must have the form owner/repository"
 [[ -n $repository_owner && -n $registry_username ]] ||
-  fail "Forgejo repository owner and registry username must be set"
+  fail "repository owner and registry username must be set"
+[[ $image_prefix =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] ||
+  fail "REGISTRY_IMAGE_PREFIX contains unsupported characters"
+[[ $image_separator == / || $image_separator == - ]] ||
+  fail "REGISTRY_IMAGE_SEPARATOR must be / or -"
 [[ -n $registry_token ]] || fail "REGISTRY_TOKEN is required"
+if [[ -n $github_package_owner ]]; then
+  [[ $registry == ghcr.io ]] ||
+    fail "REGISTRY_GITHUB_PACKAGE_OWNER is supported only for ghcr.io"
+  [[ $image_prefix == "$github_package_owner/"* ]] ||
+    fail "REGISTRY_IMAGE_PREFIX must start with the GitHub package owner"
+  [[ -n ${GH_TOKEN:-} ]] ||
+    fail "GH_TOKEN is required to check GitHub package existence"
+  command -v gh >/dev/null || fail "required command not found: gh"
+fi
 
 auth_file="$work_dir/auth.json"
 printf '%s' "$registry_token" |
   skopeo_run login --authfile "$auth_file" --username "$registry_username" --password-stdin "$registry" >/dev/null
 unset REGISTRY_TOKEN registry_token
 
+github_package_exists() {
+  local package_name=$1
+  local owner_type
+  local endpoint
+  local response_file="$work_dir/github-package-$package_name.response"
+
+  owner_type=$(gh api "users/$github_package_owner" --jq .type) ||
+    fail "cannot determine the GitHub package owner type"
+  case $owner_type in
+    User)
+      endpoint="users/$github_package_owner/packages/container/$package_name"
+      ;;
+    Organization)
+      endpoint="orgs/$github_package_owner/packages/container/$package_name"
+      ;;
+    *)
+      fail "unsupported GitHub package owner type: $owner_type"
+      ;;
+  esac
+
+  if gh api --include "$endpoint" >"$response_file" 2>&1; then
+    return 0
+  fi
+  if grep -Eq "^HTTP/[0-9.]+ 404 " "$response_file"; then
+    return 1
+  fi
+  fail "cannot verify whether GitHub package $package_name exists"
+}
+
 publish_image() {
   local name=$1
   local expected_config_digest=$2
   local archive=$3
   local source="docker-archive:$archive"
-  local repository_ref="$registry/$repository/$name"
+  local repository_ref="$registry/$image_prefix$image_separator$name"
   local destination="docker://$repository_ref:$version"
   local tags
   local remote_config_digest
   local remote_digest
+  local package_name
+  local list_tags_error="$work_dir/list-tags-$name.error"
 
-  tags=$(skopeo_run list-tags --authfile "$auth_file" "docker://$repository_ref")
+  if ! tags=$(
+    skopeo_run list-tags --authfile "$auth_file" "docker://$repository_ref" 2>"$list_tags_error"
+  ); then
+    if [[ -z $github_package_owner ]]; then
+      fail "cannot list tags for $repository_ref"
+    fi
+    package_name=${repository_ref#"$registry/$github_package_owner/"}
+    [[ $package_name != "$repository_ref" && $package_name != */* ]] ||
+      fail "cannot derive the GitHub package name from $repository_ref"
+    if github_package_exists "$package_name"; then
+      fail "cannot list tags for existing GitHub package $package_name"
+    fi
+    tags='{"Tags":[]}'
+  fi
   if jq -e --arg tag "$version" '.Tags | index($tag) != null' <<<"$tags" >/dev/null; then
     remote_config_digest=$(
       skopeo_run inspect --authfile "$auth_file" --raw "$destination" |
