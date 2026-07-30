@@ -53,6 +53,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+registries_conf="$work_dir/registries.conf"
+printf 'unqualified-search-registries = []\n' >"$registries_conf"
+export CONTAINERS_REGISTRIES_CONF="$registries_conf"
+
 skopeo_tmp_dir="$work_dir/skopeo"
 install -d "$skopeo_tmp_dir"
 skopeo_run() {

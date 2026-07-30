@@ -194,7 +194,7 @@ kustomize build deploy/base | kubeconform -strict -summary
 
 ## Project status
 
-This is early-stage software at version `0.3.1`. The controller uses
+This is early-stage software at version `0.3.2`. The controller uses
 Forgejo's current runner API and does not call the deprecated
 `forgejo-runner register` command or create a `.runner` file. The default CI
 workflow runs the non-destructive `just check` suite; the disposable Kind E2E
