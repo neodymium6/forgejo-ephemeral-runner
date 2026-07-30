@@ -40,7 +40,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: forgejo-ephemeral-runner-controller:0.2.0-dev
+          image: forgejo-ephemeral-runner-controller:dev
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
