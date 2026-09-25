@@ -6,26 +6,32 @@ name: Release
       - "v*.*.*"
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
+  e2e:
+    uses: ./.github/workflows/e2e.yaml
+
   release:
+    needs: e2e
+    permissions:
+      contents: write
+      packages: write
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - name: Check out the repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Install Nix
-        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31.11.0
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342  # v31.11.0
 
       - name: Run project checks
         run: nix develop --command just check
