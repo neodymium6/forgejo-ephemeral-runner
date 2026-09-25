@@ -24,9 +24,15 @@ type fakeForgejo struct {
 	deletedScopes    []string
 	registerErr      error
 	deleteErr        error
+	jobsErr          error
+	jobsCalls        int
 }
 
 func (f *fakeForgejo) ListJobs(context.Context, []string) ([]RemoteJob, error) {
+	f.jobsCalls++
+	if f.jobsErr != nil {
+		return nil, f.jobsErr
+	}
 	jobs := append([]RemoteJob(nil), f.jobs...)
 	for index := range jobs {
 		if jobs[index].Scope == "" {

@@ -58,12 +58,19 @@ component removed a registration in a past incident.
 
 ## Monitoring and validation
 
+Queue observations continue at full capacity. The aggregate
+`forgejo_ephemeral_runner_reservations_unmatched` gauge reports active
+reservations missing from the observed job list. Use it with queue-observation
+health and sustained-duration alerts; it is not proof of cancellation. See
+[metrics.md](metrics.md).
+
 The patch carries runner unit tests for empty polling, assignment at the idle
 deadline, recovery of an ambiguous fetch with the same request key, transient
 errors, explicit revocation during polling/reporting, invalid configuration,
-and final-report retry termination. Controller tests cover ordered cleanup after
-an idle runner exits, including UID checks and transient API failures. Existing leader-election tests continue
-to apply.
+and final-report retry termination. Controller tests cover observation at full
+capacity and preservation of live Pods across missing/incomplete lists, API
+errors, and fresh controller state. Existing UID-precondition and leader-election
+tests continue to apply.
 
 CI builds the patched runner and runs the Nixpkgs package's unit tests with
 `nix build .#forgejo-runner --no-link`. This can be expensive and is separate

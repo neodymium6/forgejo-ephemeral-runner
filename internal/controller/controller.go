@@ -146,6 +146,7 @@ func reconcile(
 	}
 	now := time.Now()
 	metrics.setQueue(0, false)
+	metrics.setUnmatchedReservations(0)
 
 	type localSlot struct {
 		pod        PodState
@@ -279,10 +280,6 @@ func reconcile(
 		return nil
 	}
 
-	if activeCount >= cfg.MaxConcurrent {
-		return nil
-	}
-
 	jobs, err := forgejo.ListJobs(ctx, cfg.RunnerLabels)
 	if err != nil {
 		return fmt.Errorf("list Forgejo jobs: %w", err)
@@ -306,6 +303,20 @@ func reconcile(
 		waiting = append(waiting, job)
 	}
 	metrics.setQueue(len(waiting), true)
+	// Absence from this waiting/running-only API is an observation, never
+	// permission to terminate a Pod. A task may have just been assigned or
+	// completed, and an API response may be incomplete.
+	observedHandles := make(map[scopedJobHandle]struct{}, len(jobs))
+	for _, job := range jobs {
+		observedHandles[scopedJobHandle{Scope: job.Scope, Handle: job.Handle}] = struct{}{}
+	}
+	unmatched := 0
+	for handle := range activeHandles {
+		if _, observed := observedHandles[handle]; !observed {
+			unmatched++
+		}
+	}
+	metrics.setUnmatchedReservations(unmatched)
 
 	jobIndex := 0
 	for slot, local := range slots {

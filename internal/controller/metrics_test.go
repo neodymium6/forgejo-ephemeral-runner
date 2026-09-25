@@ -15,6 +15,7 @@ func TestMetricsHandlerExposesFixedSchema(t *testing.T) {
 	metrics.setLeader(true)
 	metrics.setRunnerSlots(2, 4)
 	metrics.setQueue(3, true)
+	metrics.setUnmatchedReservations(1)
 	metrics.observeReconcile(125*time.Millisecond, nil)
 	metrics.observeReconcile(375*time.Millisecond, errors.New("failed"))
 	metrics.observeOperation(operationPodCreate, nil)
@@ -43,6 +44,7 @@ func TestMetricsHandlerExposesFixedSchema(t *testing.T) {
 		"forgejo_ephemeral_runner_runner_slots_capacity 4",
 		"forgejo_ephemeral_runner_waiting_jobs 3",
 		"forgejo_ephemeral_runner_queue_observed 1",
+		"forgejo_ephemeral_runner_reservations_unmatched 1",
 		`forgejo_ephemeral_runner_reconciliations_total{result="success"} 1`,
 		`forgejo_ephemeral_runner_reconciliations_total{result="failure"} 1`,
 		"forgejo_ephemeral_runner_reconcile_duration_seconds_sum 0.5",
@@ -115,11 +117,12 @@ func TestLeaderMetricClearsReplicaState(t *testing.T) {
 	metrics.setLeader(true)
 	metrics.setRunnerSlots(2, 4)
 	metrics.setQueue(3, true)
+	metrics.setUnmatchedReservations(1)
 
 	metrics.setLeader(false)
 
 	if metrics.leader.Load() != 0 || metrics.activeSlots.Load() != 0 ||
-		metrics.waitingJobs.Load() != 0 || metrics.queueObserved.Load() != 0 {
+		metrics.waitingJobs.Load() != 0 || metrics.queueObserved.Load() != 0 || metrics.unmatchedReservations.Load() != 0 {
 		t.Fatal("follower metrics retained leader-only state")
 	}
 	if metrics.slotCapacity.Load() != 4 {

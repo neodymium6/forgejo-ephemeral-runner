@@ -62,6 +62,7 @@ type Metrics struct {
 	slotCapacity          atomic.Int64
 	waitingJobs           atomic.Int64
 	queueObserved         atomic.Int64
+	unmatchedReservations atomic.Int64
 	reconcileSuccess      atomic.Uint64
 	reconcileFailure      atomic.Uint64
 	reconcileDurationNano atomic.Uint64
@@ -95,6 +96,13 @@ func (m *Metrics) setLeader(leader bool) {
 	m.activeSlots.Store(0)
 	m.waitingJobs.Store(0)
 	m.queueObserved.Store(0)
+	m.unmatchedReservations.Store(0)
+}
+
+func (m *Metrics) setUnmatchedReservations(count int) {
+	if m != nil {
+		m.unmatchedReservations.Store(int64(count))
+	}
 }
 
 func (m *Metrics) setRunnerSlots(active, capacity int) {
@@ -199,6 +207,8 @@ func (m *Metrics) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	fmt.Fprintf(&body, "forgejo_ephemeral_runner_waiting_jobs %d\n", m.waitingJobs.Load())
 	writeMetricHeader(&body, "forgejo_ephemeral_runner_queue_observed", "Whether the current leader observed the queue during its latest reconciliation.", "gauge")
 	fmt.Fprintf(&body, "forgejo_ephemeral_runner_queue_observed %d\n", m.queueObserved.Load())
+	writeMetricHeader(&body, "forgejo_ephemeral_runner_reservations_unmatched", "Active reservations absent from the latest observed job list; not proof of cancellation.", "gauge")
+	fmt.Fprintf(&body, "forgejo_ephemeral_runner_reservations_unmatched %d\n", m.unmatchedReservations.Load())
 	writeMetricHeader(&body, "forgejo_ephemeral_runner_reconciliations_total", "Completed reconciliation attempts.", "counter")
 	fmt.Fprintf(&body, "forgejo_ephemeral_runner_reconciliations_total{result=\"success\"} %d\n", m.reconcileSuccess.Load())
 	fmt.Fprintf(&body, "forgejo_ephemeral_runner_reconciliations_total{result=\"failure\"} %d\n", m.reconcileFailure.Load())
