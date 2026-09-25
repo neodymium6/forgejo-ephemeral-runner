@@ -19,6 +19,9 @@
         let
           pkgs = import nixpkgs { inherit system; };
           version = "0.4.0";
+          patchedForgejoRunner = pkgs.forgejo-runner.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ./patches/forgejo-runner-idle-timeout.patch ];
+          });
           controller = pkgs.buildGoModule {
             pname = "forgejo-ephemeral-runner-controller";
             inherit version;
@@ -46,7 +49,7 @@
             name = "forgejo-ephemeral-one-job";
             runtimeInputs = [
               pkgs.coreutils
-              pkgs.forgejo-runner
+              patchedForgejoRunner
             ];
             text = builtins.readFile ./scripts/run-one-job.sh;
           };
@@ -66,7 +69,7 @@
             pkgs.cacert
             pkgs.coreutils
             pkgs.findutils
-            pkgs.forgejo-runner
+            patchedForgejoRunner
             pkgs.git
             pkgs.gnugrep
             pkgs.gnused
@@ -142,6 +145,7 @@
         {
           default = controller;
           inherit controller;
+          forgejo-runner = patchedForgejoRunner;
           release-tools = pkgs.symlinkJoin {
             name = "forgejo-ephemeral-runner-release-tools";
             paths = [

@@ -161,7 +161,12 @@ the previous configuration.
 
 Polling adds up to one reconciliation interval before a job is observed. A job
 can also be canceled or claimed between listing and runner startup. These races
-should fail closed or be recovered by normal cleanup. The opt-in E2E harness
+are handled by bounded idle polling in the patched runner. Its deadline is
+checked only after a successful empty task response; an assigned task wins over
+the deadline, and ambiguous fetch errors preserve the idempotency key. Job-list
+absence never causes controller-driven Pod deletion. See
+[runner-lifecycle.md](runner-lifecycle.md) for the recovery boundary, including
+the limitation during a continuing API outage. The opt-in E2E harness
 includes, and has exercised in a successful local run, a failure-injection
 scenario for a crash after Forgejo commits a runner registration and before
 Kubernetes records it.
