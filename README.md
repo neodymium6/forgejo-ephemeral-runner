@@ -4,8 +4,9 @@ A small, early-stage controller that gives each Forgejo Actions job
 a fresh Kubernetes Pod without implementing the Forgejo Actions protocol.
 
 The controller polls Forgejo 15's jobs API, creates a server-enforced ephemeral
-runner for each matching waiting job, and starts the official Forgejo Runner
-with `one-job --handle`. It scales runner Pods to zero when no job is waiting
+runner for each matching waiting job, and starts Forgejo Runner with a small
+[lifecycle patch](docs/runner-lifecycle.md) using `one-job --handle`. It scales
+runner Pods to zero when no job is waiting
 and supports a configurable concurrency limit.
 
 ## Lifecycle
@@ -25,8 +26,12 @@ two-replica controller Deployment
 
 `MAX_CONCURRENT` defaults to `1` and accepts values from `1` through `10`.
 Stalled `Pending` and `Unknown` Pods are recovered after configurable, positive
-timeouts; the base defaults to 30 minutes and 5 minutes respectively. The
-current development target is Forgejo 15. The disposable test fixture pins
+timeouts; the base defaults to 30 minutes and 5 minutes respectively. The runner
+also stops idle polling after five minutes once Forgejo confirms an
+empty task response. This recovers reservations cancelled before assignment
+without imposing a five-minute limit on running jobs. Ambiguous fetch failures
+continue retrying with the same request key until assignment is resolved.
+The current development target is Forgejo 15. The disposable test fixture pins
 Forgejo 15.0.5, and the pinned Nixpkgs input currently supplies Forgejo Runner
 12.13.1. Other versions are not yet part of the tested compatibility surface.
 
@@ -96,6 +101,11 @@ launcher and E2E helper tests, static analysis, manifest rendering, and Nix
 flake evaluation. Forgejo CI first verifies the non-root runner identity,
 private Nix store access, inability to create `/homeless-shelter`, and two
 consecutive Nix builds.
+
+Both CI workflows also build and test the patched runner with
+`nix build .#forgejo-runner --no-link`. This is a separate, potentially expensive
+check; it is not part of `just check`. Custom workflow images must include this
+patched binary to receive the idle-wait and revoked-credential fixes.
 
 The full end-to-end harness is deliberately separate from default CI. It needs
 a Docker or Podman service to create a fixed, disposable Kind cluster and is
@@ -225,5 +235,6 @@ path, and a successful local run of the disposable Forgejo E2E harness
 exercised the
 corresponding failure-injection scenario.
 
-The project source is licensed under the
-[Apache License 2.0](LICENSE).
+The controller project source is licensed under the
+[Apache License 2.0](LICENSE). The upstream runner patch retains the
+[upstream licenses](docs/runner-lifecycle.md#upstream-references-and-licensing).

@@ -25,3 +25,6 @@ jobs:
 
       - name: Run project checks
         run: nix develop --command just check
+
+      - name: Build and test the patched runner
+        run: nix build .#forgejo-runner --no-link

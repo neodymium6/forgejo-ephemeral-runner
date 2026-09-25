@@ -1,0 +1,143 @@
+--- /dev/null
++++ b/internal/app/poll/idle_test.go
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++package poll
++
++import (
++	"context"
++	"errors"
++	"testing"
++	"time"
++
++	runnerv1 "code.forgejo.org/forgejo/actions-proto/runner/v1"
++	mock_runner "code.forgejo.org/forgejo/runner/v12/internal/app/run/mocks"
++	mock_client "code.forgejo.org/forgejo/runner/v12/internal/pkg/client/mocks"
++	"code.forgejo.org/forgejo/runner/v12/internal/pkg/config"
++	"connectrpc.com/connect"
++	gouuid "github.com/google/uuid"
++	"github.com/stretchr/testify/mock"
++	"github.com/stretchr/testify/require"
++)
++
++func TestSingleTaskPollerIdleDeadline(t *testing.T) {
++	for _, test := range []struct {
++		name       string
++		firstError error
++		firstNil   bool
++		task       bool
++	}{
++		{name: "cancelled before assignment"},
++		{name: "assignment wins over elapsed deadline", task: true},
++		{name: "lost assignment response is recovered", firstError: context.DeadlineExceeded, task: true},
++		{name: "missing response is retried", firstNil: true, task: true},
++		{name: "transient failure followed by confirmed empty response", firstError: connect.NewError(connect.CodeUnavailable, errors.New("unavailable"))},
++		{name: "generic authentication failure is retried", firstError: connect.NewError(connect.CodeUnauthenticated, errors.New("temporary gateway failure")), task: true},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			t.Setenv("FORGEJO_RUNNER_IDLE_TIMEOUT", "1ns")
++			handle := "reserved-job-attempt"
++			c := mock_client.NewMockClient(t)
++			c.On("Address").Return("https://forgejo.example.com")
++			c.On("FetchInterval").Return(time.Nanosecond)
++			var keys []gouuid.UUID
++			c.On("SetRequestKey", mock.Anything).Run(func(args mock.Arguments) {
++				keys = append(keys, args.Get(0).(gouuid.UUID))
++			}).Return(func() {})
++			request := connect.NewRequest(&runnerv1.FetchSingleTaskRequest{Handle: &handle})
++			if test.firstError != nil {
++				c.On("FetchSingleTask", mock.Anything, request).Return(nil, test.firstError).Once()
++			}
++			if test.firstNil {
++				c.On("FetchSingleTask", mock.Anything, request).Return(nil, nil).Once()
++			}
++			var task *runnerv1.Task
++			if test.task {
++				task = &runnerv1.Task{Id: 42}
++			}
++			c.On("FetchSingleTask", mock.Anything, request).Return(connect.NewResponse(&runnerv1.FetchSingleTaskResponse{Task: task}), nil).Once()
++			r := mock_runner.NewMockRunner(t)
++			if test.task {
++				r.On("Run", mock.Anything, task).Run(func(args mock.Arguments) {
++					// The idle deadline must not be inherited by an assigned task.
++					ctx := args.Get(0).(context.Context)
++					require.NoError(t, ctx.Err())
++					_, hasDeadline := ctx.Deadline()
++					require.False(t, hasDeadline)
++				})
++			}
++			p := NewSingleTaskPoller(t.Context(), &config.Config{Runner: config.Runner{FetchTimeout: time.Second}}, c, r, true, &handle)
++			err := p.Poll()
++			if test.task {
++				require.NoError(t, err)
++			} else {
++				require.ErrorIs(t, err, ErrNoTaskReceived)
++			}
++			if test.firstError != nil || test.firstNil {
++				require.Len(t, keys, 2)
++				require.Equal(t, keys[0], keys[1], "ambiguous requests must retain their idempotency key")
++			}
++			require.NoError(t, p.Shutdown(t.Context()))
++		})
++	}
++}
++
++func TestSingleTaskPollerInvalidIdleTimeout(t *testing.T) {
++	for _, value := range []string{"0s", "-1s", "invalid"} {
++		t.Run(value, func(t *testing.T) {
++			t.Setenv("FORGEJO_RUNNER_IDLE_TIMEOUT", value)
++			handle := "reserved-job-attempt"
++			p := NewSingleTaskPoller(t.Context(), &config.Config{}, nil, nil, true, &handle)
++			require.ErrorContains(t, p.Poll(), "positive duration")
++			require.NoError(t, p.Shutdown(t.Context()))
++		})
++	}
++}
+--- a/internal/app/poll/single.go
++++ b/internal/app/poll/single.go
+@@ -6,6 +6,8 @@
+ import (
+ 	"context"
+ 	"errors"
++	"os"
++	"time"
+ 
+ 	runnerv1 "code.forgejo.org/forgejo/actions-proto/runner/v1"
+ 	"code.forgejo.org/forgejo/runner/v12/internal/app/run"
+@@ -64,6 +66,18 @@
+ }
+ 
+ func (s *singleTaskPoller) Poll() error {
++	// Bound only idle polling for a specific handle. The idle deadline never
++	// cancels a fetch: its response may be lost after server-side assignment.
++	idleTimeout := 5 * time.Minute
++	if raw := os.Getenv("FORGEJO_RUNNER_IDLE_TIMEOUT"); raw != "" {
++		var err error
++		idleTimeout, err = time.ParseDuration(raw)
++		if err != nil || idleTimeout <= 0 {
++			close(s.done)
++			return errors.New("FORGEJO_RUNNER_IDLE_TIMEOUT must be a positive duration")
++		}
++	}
++	idleDeadline := time.Now().Add(idleTimeout)
+ 	rateLimiter := rate.NewLimiter(rate.Every(s.client.FetchInterval()), 1)
+ 
+ 	log.Info("single task poller launched")
+@@ -106,9 +120,15 @@
+ 		if !reuseRequestKey {
+ 			requestKey = gouuid.New()
+ 		}
+-		if task == nil && s.wait {
++		// A successful empty response resolves any ambiguous earlier request.
++		// A returned task always wins, even after the idle deadline has passed.
++		idleExpired := s.handle != nil && !reuseRequestKey && !time.Now().Before(idleDeadline)
++		if task == nil && s.wait && !idleExpired {
+ 			log.Infof("single task poller received no task from %s, trying again", s.client.Address())
+ 			continue
++		}
++		if task == nil && s.wait && idleExpired {
++			log.Info("single task poller idle timeout reached after a confirmed empty response")
+ 		}
+ 
+ 		var err error

@@ -24,9 +24,15 @@ type fakeForgejo struct {
 	deletedScopes    []string
 	registerErr      error
 	deleteErr        error
+	jobsErr          error
+	jobsCalls        int
 }
 
 func (f *fakeForgejo) ListJobs(context.Context, []string) ([]RemoteJob, error) {
+	f.jobsCalls++
+	if f.jobsErr != nil {
+		return nil, f.jobsErr
+	}
 	jobs := append([]RemoteJob(nil), f.jobs...)
 	for index := range jobs {
 		if jobs[index].Scope == "" {
@@ -70,13 +76,15 @@ type fakeKubernetes struct {
 	deleteCredentialCalls int
 	deleteCredentialUIDs  []string
 	createPodErr          error
+	getPodErr             error
+	deletePodErr          error
 	createCredentialErr   error
 	credentialHandles     []string
 	credentialScopes      []string
 }
 
 func (f *fakeKubernetes) GetPod(context.Context, int) (PodState, error) {
-	return f.pod, nil
+	return f.pod, f.getPodErr
 }
 
 func (f *fakeKubernetes) CreatePod(context.Context, int) error {
@@ -87,7 +95,7 @@ func (f *fakeKubernetes) CreatePod(context.Context, int) error {
 func (f *fakeKubernetes) DeletePod(_ context.Context, _ int, uid string) error {
 	f.deletePodCalls++
 	f.deletePodUIDs = append(f.deletePodUIDs, uid)
-	return nil
+	return f.deletePodErr
 }
 
 func (f *fakeKubernetes) GetCredential(context.Context, int) (CredentialState, error) {
