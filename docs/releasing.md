@@ -21,8 +21,9 @@ Protect the `v*.*.*` tag pattern. Only reviewed commits on `main` should be
 eligible for a release tag. The registry credential is available only to the
 tag workflow step that publishes images.
 
-GitHub needs no additional repository secret. Its release workflow uses the
-short-lived `GITHUB_TOKEN` with `contents: write` and `packages: write`.
+GitHub needs no additional repository secret. Its publication job uses the
+short-lived `GITHUB_TOKEN` with `contents: write` and `packages: write`. The
+preceding E2E job has only `contents: read` and receives no deployment secrets.
 
 ## Prepare a release
 
@@ -30,7 +31,8 @@ short-lived `GITHUB_TOKEN` with `contents: write` and `packages: write`.
 2. Set the same version in `flake.nix`.
 3. Run `nix develop --command just check`.
 4. Commit and merge the reviewed change to `main`.
-5. Confirm that the Forgejo `CI` workflow succeeds for that commit.
+5. Confirm that the `CI` workflow succeeds for that commit on each target
+   release remote, including the E2E job on GitHub.
 
 The publication script can build and inspect both OCI images without contacting
 the registry:
@@ -63,7 +65,16 @@ git push origin v0.2.0
 git push github v0.2.0
 ```
 
-`.forgejo/workflows/release.yaml` and `.github/workflows/release.yaml` then:
+The tag triggers `.forgejo/workflows/release.yaml` or
+`.github/workflows/release.yaml` on the corresponding remote.
+
+On GitHub, a separate E2E job first runs the disposable Kind harness against
+the tagged source. Publication is skipped if E2E fails or is cancelled. This
+gate is independent of the earlier CI run on `main`. Forgejo's release workflow
+does not run E2E because its unprivileged runner Pod has no container-runtime
+service.
+
+The publication job on each remote:
 
 1. checks out the full history without persisting checkout credentials;
 2. runs the complete `just check` suite;

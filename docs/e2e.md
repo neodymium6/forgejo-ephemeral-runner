@@ -1,12 +1,19 @@
 # End-to-end tests
 
-The end-to-end harness is opt-in. It creates a dedicated Kind cluster named
+The end-to-end harness creates a dedicated Kind cluster named
 `forgejo-ephemeral-runner-e2e`; it never uses the current Kubernetes context.
 All `kubectl` calls use the kubeconfig generated under the ignored `.e2e/`
 directory.
 
-The complete harness has passed on a local Podman development host. It is not
-part of the default Forgejo CI workflow and is not required for every change.
+GitHub CI runs the harness for pull requests, pushes to `main`, and manual
+dispatch. The reusable workflow in `.github/workflows/e2e.yaml` runs on a
+GitHub-hosted Ubuntu VM with Docker, a read-only repository token, and no
+deployment credentials. The GitHub release workflow runs it against the tag's
+source and requires success before publishing images or creating a release.
+The job always attempts cleanup after the E2E step, including on failure, and
+does not upload the generated credentials, kubeconfig, or raw cluster logs.
+
+Local execution remains opt-in. Forgejo CI does not run the harness.
 The base runner Pod intentionally has no host container-runtime socket,
 privileged mode, or nested-container service, so running this Kind harness
 inside that Pod is neither a supported nor an intended configuration. Use an

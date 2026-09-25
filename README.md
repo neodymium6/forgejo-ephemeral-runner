@@ -1,6 +1,6 @@
 # Forgejo Ephemeral Runner for Kubernetes
 
-A small, early-stage controller that gives each Forgejo Actions job
+A controller that gives each Forgejo Actions job
 a fresh Kubernetes Pod without implementing the Forgejo Actions protocol.
 
 The controller polls Forgejo 15's jobs API, creates a server-enforced ephemeral
@@ -107,10 +107,12 @@ Both CI workflows also build and test the patched runner with
 check; it is not part of `just check`. Custom workflow images must include this
 patched binary to receive the idle-wait and revoked-credential fixes.
 
-The full end-to-end harness is deliberately separate from default CI. It needs
-a Docker or Podman service to create a fixed, disposable Kind cluster and is
-not intended to run inside the unprivileged runner Pod. See
-[docs/e2e.md](docs/e2e.md) before invoking it on an isolated development host:
+GitHub CI also runs the full end-to-end harness in a separate Ubuntu VM using
+Docker and a disposable Kind cluster. The GitHub release workflow requires
+the same E2E checks to pass before publishing. Forgejo CI does not run this
+harness inside the unprivileged runner Pod, which has no container-runtime
+service. See [docs/e2e.md](docs/e2e.md) before invoking it locally on an isolated
+development host with Docker or Podman:
 
 ```sh
 just e2e
@@ -220,20 +222,24 @@ kustomize build deploy/base | kubeconform -strict -summary
 
 ## Project status
 
-This is early-stage software at version `0.4.1`. The controller uses
-Forgejo's current runner API and does not call the deprecated
-`forgejo-runner register` command or create a `.runner` file. The default CI
-workflow runs the non-destructive `just check` suite; the disposable Kind E2E
-harness has passed on a local Podman development host, but remains an explicit
-operator test and is not a release gate.
+Published versions and their changes are listed in the
+[release notes](https://github.com/neodymium6/forgejo-ephemeral-runner/releases).
+The controller uses Forgejo's runner API and does not call the deprecated
+`forgejo-runner register` command or create a `.runner` file.
+
+The default CI workflows run the non-destructive `just check` suite and build
+the patched Forgejo Runner with its tests. GitHub CI also runs the
+[disposable Kind E2E harness](docs/e2e.md), and GitHub releases require it to
+succeed before publication. Local E2E runs remain opt-in. See
+[runner lifecycle validation](docs/runner-lifecycle.md#monitoring-and-validation)
+for regression coverage and the limits of mock tests.
 
 Creating a Forgejo runner and recording its ID in Kubernetes cannot be one
 atomic transaction. On restart, the active controller lists runners at its
 configured allowlist scopes and safely removes only ephemeral registrations
 bearing its deterministic managed identity. Unit tests exercise this recovery
-path, and a successful local run of the disposable Forgejo E2E harness
-exercised the
-corresponding failure-injection scenario.
+path, and the disposable E2E harness includes the corresponding
+failure-injection scenario.
 
 The controller project source is licensed under the
 [Apache License 2.0](LICENSE). The upstream runner patch retains the

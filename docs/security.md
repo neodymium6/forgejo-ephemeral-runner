@@ -166,10 +166,9 @@ checked only after a successful empty task response; an assigned task wins over
 the deadline, and ambiguous fetch errors preserve the idempotency key. Job-list
 absence never causes controller-driven Pod deletion. See
 [runner-lifecycle.md](runner-lifecycle.md) for the recovery boundary, including
-the limitation during a continuing API outage. The opt-in E2E harness
-includes, and has exercised in a successful local run, a failure-injection
-scenario for a crash after Forgejo commits a runner registration and before
-Kubernetes records it.
+the limitation during a continuing API outage. The
+[E2E harness](e2e.md) includes a failure-injection scenario for a crash after
+Forgejo commits a runner registration and before Kubernetes records it.
 
 ## Lifecycle and stale cleanup
 
