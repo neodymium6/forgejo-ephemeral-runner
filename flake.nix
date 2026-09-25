@@ -20,7 +20,10 @@
           pkgs = import nixpkgs { inherit system; };
           version = "0.4.0";
           patchedForgejoRunner = pkgs.forgejo-runner.overrideAttrs (old: {
-            patches = (old.patches or [ ]) ++ [ ./patches/forgejo-runner-idle-timeout.patch ];
+            patches = (old.patches or [ ]) ++ [
+              ./patches/forgejo-runner-idle-timeout.patch
+              ./patches/forgejo-runner-revoked-credential.patch
+            ];
           });
           controller = pkgs.buildGoModule {
             pname = "forgejo-ephemeral-runner-controller";

@@ -105,7 +105,7 @@ consecutive Nix builds.
 Both CI workflows also build and test the patched runner with
 `nix build .#forgejo-runner --no-link`. This is a separate, potentially expensive
 check; it is not part of `just check`. Custom workflow images must include this
-patched binary to receive the idle-wait fix.
+patched binary to receive the idle-wait and revoked-credential fixes.
 
 The full end-to-end harness is deliberately separate from default CI. It needs
 a Docker or Podman service to create a fixed, disposable Kind cluster and is
