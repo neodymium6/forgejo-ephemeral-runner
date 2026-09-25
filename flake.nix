@@ -18,7 +18,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
-          version = "0.4.0";
+          version = "0.4.1";
           patchedForgejoRunner = pkgs.forgejo-runner.overrideAttrs (old: {
             patches = (old.patches or [ ]) ++ [
               ./patches/forgejo-runner-idle-timeout.patch
