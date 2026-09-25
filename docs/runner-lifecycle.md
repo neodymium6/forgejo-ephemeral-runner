@@ -74,8 +74,10 @@ tests continue to apply.
 
 CI builds the patched runner and runs the Nixpkgs package's unit tests with
 `nix build .#forgejo-runner --no-link`. This can be expensive and is separate
-from `just check`. The disposable Kind E2E harness remains opt-in; mock tests
-do not replace a controlled cancellation test against a real Forgejo instance.
+from `just check`. GitHub CI and releases also run the disposable Kind E2E
+harness; local runs remain opt-in. Its lifecycle scenarios do not yet cover
+cancellation. The mock tests do not replace a controlled cancellation test
+against a real Forgejo instance.
 
 ## Upstream references and licensing
 
